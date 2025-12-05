@@ -3,7 +3,17 @@
 import { usePrivy, useWallets } from '@privy-io/react-auth';
 import { useState, useMemo } from 'react';
 import { useSendTransaction } from '@privy-io/react-auth';
-import { getAddress } from 'viem';
+import { getAddress, encodeFunctionData, parseUnits, createPublicClient, http, formatUnits, erc20Abi } from 'viem';
+import { arbitrum } from 'viem/chains';
+
+// Arbitrum mainnet chain ID
+const ARBITRUM_CHAIN_ID = 42161;
+
+// Create public client for Arbitrum
+const arbitrumClient = createPublicClient({
+  chain: arbitrum,
+  transport: http(),
+});
 
 export function Deposit() {
   const { ready, authenticated } = usePrivy();
@@ -76,27 +86,97 @@ export function Deposit() {
     setTxResult(null);
 
     try {
-      // Convert amount to USDC units (6 decimals for USDC)
-      const amountInUnits = BigInt(Math.floor(parseFloat(amount) * 1_000_000));
+      const primaryWallet = ethereumWallets[0];
+      const walletAddress = getAddress(primaryWallet.address);
       
-      // ERC-20 transfer function signature: transfer(address,uint256)
-      const transferFunctionSignature = '0xa9059cbb';
+      // First, verify the wallet has sufficient USDC balance
+      console.log('Verifying USDC balance for wallet:', walletAddress);
+      try {
+        const balance = await arbitrumClient.readContract({
+          address: usdcAddress,
+          abi: erc20Abi,
+          functionName: 'balanceOf',
+          args: [walletAddress],
+        });
+        
+        const balanceFormatted = formatUnits(balance as bigint, 6);
+        console.log('Wallet USDC balance:', balanceFormatted, 'USDC');
+        
+        if (parseFloat(balanceFormatted) < parseFloat(amount)) {
+          setTxResult({
+            success: false,
+            message: `Insufficient USDC balance. You have ${balanceFormatted} USDC, but trying to send ${amount} USDC.`,
+          });
+          setIsSending(false);
+          return;
+        }
+      } catch (balanceError) {
+        console.error('Error checking balance:', balanceError);
+        // Continue anyway - might be a network issue
+      }
       
-      // Encode the function call
-      // transfer(address to, uint256 amount)
-      // Pad bridge address to 32 bytes (remove 0x, pad to 64 chars)
-      const paddedAddress = bridgeAddress.slice(2).padStart(64, '0');
-      // Pad amount to 32 bytes (64 hex chars)
-      const paddedAmount = amountInUnits.toString(16).padStart(64, '0');
+      // Switch wallet to Arbitrum if not already on it
+      // This ensures the transaction is sent on Arbitrum network
+      const currentChainId = primaryWallet.chainId;
+      const arbitrumChainId = `eip155:${ARBITRUM_CHAIN_ID}`;
       
-      const data = transferFunctionSignature + paddedAddress + paddedAmount;
+      if (currentChainId !== arbitrumChainId) {
+        try {
+          await primaryWallet.switchChain(ARBITRUM_CHAIN_ID);
+        } catch (switchError) {
+          console.error('Error switching chain:', switchError);
+          // Continue anyway - the chainId in the transaction should handle it
+        }
+      }
 
-      // Send transaction
-      const tx = await sendTransaction({
-        to: usdcAddress as `0x${string}`,
-        value: '0x0', // No ETH value, this is an ERC-20 transfer
-        data: data as `0x${string}`,
+      // Convert amount to USDC units (6 decimals for USDC)
+      // Use parseUnits for proper decimal handling
+      const amountInUnits = parseUnits(amount, 6);
+      
+      // Use viem's encodeFunctionData with erc20Abi (as per Privy guide)
+      // This ensures correct ABI encoding matching the official Privy example
+      const data = encodeFunctionData({
+        abi: erc20Abi,
+        functionName: 'transfer',
+        args: [bridgeAddress, amountInUnits],
       });
+
+      // Log transaction details for debugging
+      console.log('Transaction details:', {
+        to: usdcAddress,
+        bridgeAddress,
+        amount: amount,
+        amountInUnits: amountInUnits.toString(),
+        data,
+        chainId: ARBITRUM_CHAIN_ID,
+      });
+      console.log('Full transaction object:', JSON.stringify({
+        to: usdcAddress,
+        value: '0x0',
+        data: data,
+        chainId: ARBITRUM_CHAIN_ID,
+      }, null, 2));
+
+      // Send transaction on Arbitrum mainnet
+      // Following Privy guide format: https://docs.privy.io/recipes/hyperliquid-guide
+      // Note: React hook uses chainId (not caip2 like Node SDK), but structure is similar
+      // 
+      // NOTE: Gas sponsorship issue - Even with TEE enabled, gas sponsorship (sponsor: true) 
+      // causes "UserOperation reverted during simulation" errors. Transaction works fine without 
+      // sponsorship when user has ETH for gas. This may be due to paymaster configuration, 
+      // rate limits, or smart wallet token storage. For now, using sponsor: false.
+      const tx = await sendTransaction(
+        {
+          to: usdcAddress as `0x${string}`,
+          value: '0x0', // No ETH value, this is an ERC-20 transfer
+          data: data as `0x${string}`,
+          chainId: ARBITRUM_CHAIN_ID, // Arbitrum mainnet chain ID (42161)
+        },
+        {
+          sponsor: false, // Gas sponsorship disabled - user will pay gas fees
+          // TODO: Investigate why gas sponsorship fails even with TEE enabled
+        }
+      );
 
       setTxResult({
         success: true,
@@ -105,9 +185,64 @@ export function Deposit() {
       });
     } catch (error) {
       console.error('Error sending deposit transaction:', error);
+      
+      // Log full error details for debugging - including the full error object
+      try {
+        console.error('Full error object:', JSON.stringify(error, Object.getOwnPropertyNames(error), 2));
+      } catch (e) {
+        console.error('Could not stringify error, logging properties:', error);
+      }
+      
+      if (error instanceof Error) {
+        console.error('Error name:', error.name);
+        console.error('Error message:', error.message);
+        console.error('Error stack:', error.stack);
+        
+        // Try to access any additional properties
+        const errorAny = error as any;
+        if (errorAny.cause) {
+          console.error('Error cause:', errorAny.cause);
+        }
+        if (errorAny.details) {
+          console.error('Error details:', errorAny.details);
+        }
+        if (errorAny.data) {
+          console.error('Error data:', errorAny.data);
+        }
+        if (errorAny.response) {
+          console.error('Error response:', errorAny.response);
+        }
+        if (errorAny.code) {
+          console.error('Error code:', errorAny.code);
+        }
+        if (errorAny.shortMessage) {
+          console.error('Error shortMessage:', errorAny.shortMessage);
+        }
+      }
+      
+      // Log the error as-is to see its structure
+      console.error('Raw error:', error);
+      
+      // Try to extract more details from the error object
+      let errorMessage = 'Failed to send transaction';
+      if (error instanceof Error) {
+        errorMessage = error.message;
+        
+        // Check for common error patterns
+        if (error.message.includes('UserOperation reverted')) {
+          errorMessage = 'Transaction simulation failed. This may be due to insufficient balance, contract restrictions, or invalid transaction data.';
+        } else if (error.message.includes('revert') || error.message.includes('Reverted')) {
+          errorMessage = 'Transaction was reverted. Please check your USDC balance and ensure the bridge address is correct.';
+        } else if (error.message.includes('sponsor') || error.message.includes('gas')) {
+          errorMessage = 'Gas sponsorship error. Please verify gas sponsorship is enabled in your Privy dashboard.';
+        } else if (error.message.includes('400') || error.message.includes('Bad Request')) {
+          errorMessage = 'Invalid request to Privy. Please check the transaction parameters.';
+        }
+      }
+      
       setTxResult({
         success: false,
-        message: error instanceof Error ? error.message : 'Failed to send transaction',
+        message: errorMessage,
       });
     } finally {
       setIsSending(false);
@@ -151,24 +286,38 @@ export function Deposit() {
       <h2 className="text-xl font-semibold mb-4">Step 4: Deposit to HyperCore (Initialize Account)</h2>
       
       <div className="space-y-4">
+        {/* Network Verification */}
+        <div className="p-3 bg-green-50 dark:bg-green-900/30 border border-green-200 dark:border-green-800 rounded-lg">
+          <p className="text-sm text-green-800 dark:text-green-200 font-semibold mb-1">
+            ✓ Configured for Mainnet
+          </p>
+          <p className="text-xs text-green-700 dark:text-green-300">
+            Network: Arbitrum Mainnet • Hyperliquid: Mainnet
+          </p>
+        </div>
+
         <div className="p-4 bg-blue-50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-800 rounded-lg">
           <p className="text-sm text-blue-800 dark:text-blue-200 mb-2">
             <strong>Important:</strong> To trade on Hyperliquid, you need to deposit USDC first.
-            This will activate your account on Hyperliquid.
+            This will activate your account on Hyperliquid mainnet.
           </p>
           <p className="text-xs text-blue-700 dark:text-blue-300">
             Minimum deposit: 5 USDC • Network: {isTestnet ? 'Arbitrum Sepolia (Testnet)' : 'Arbitrum (Mainnet)'}
           </p>
           <p className="text-xs text-blue-700 dark:text-blue-300 mt-2">
-            <strong>Recommended:</strong> Use the Hyperliquid UI to deposit (go to app.hyperliquid.xyz → Deposit).
-            The bridge address below is for programmatic deposits.
+            <strong>Network:</strong> Transaction will be sent on Arbitrum mainnet (chain ID: 42161).
+            The wallet will automatically switch to Arbitrum if needed.
+          </p>
+          <p className="text-xs text-yellow-700 dark:text-yellow-300 mt-2 font-medium">
+            <strong>Gas Sponsorship:</strong> Disabled - You will need ETH in your wallet to pay for gas fees.
+            Make sure you have sufficient ETH balance on Arbitrum to cover the transaction.
           </p>
         </div>
 
         <div className="space-y-3">
           <div>
             <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-1">
-              Bridge Address (HyperCore)
+              Bridge Address (HyperCore) - Mainnet
             </label>
             <div className="flex items-center gap-2">
               <input
@@ -185,7 +334,8 @@ export function Deposit() {
               </button>
             </div>
             <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
-              Send USDC to this address on Arbitrum {isTestnet ? 'Sepolia' : ''}
+              Send USDC to this address on Arbitrum Mainnet
+              {isTestnet && <span className="text-red-600 dark:text-red-400 ml-2">⚠️ WARNING: Currently set to testnet!</span>}
             </p>
           </div>
 

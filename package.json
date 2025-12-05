@@ -3,12 +3,13 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev --webpack",
     "build": "next build",
     "start": "next start",
     "lint": "eslint"
   },
   "dependencies": {
+    "@coinbase/cdp-sdk": "^1.39.0",
     "@nktkas/hyperliquid": "^0.28.0",
     "@privy-io/node": "^0.6.2",
     "@privy-io/react-auth": "^3.8.1",

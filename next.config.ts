@@ -3,6 +3,8 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   // Exclude test files from server components
   serverExternalPackages: ['tap', 'tape', 'why-is-node-running'],
+  // Add empty turbopack config to silence warning (we're using webpack)
+  turbopack: {},
   webpack: (config, { isServer }) => {
     // Make Solana packages optional (we're not using Solana)
     config.resolve = config.resolve || {};

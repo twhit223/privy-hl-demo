@@ -3,8 +3,11 @@ import { AuthButton } from '@/components/AuthButton';
 import { HyperliquidClient } from '@/components/HyperliquidClient';
 import { BuyUSDC } from '@/components/BuyUSDC';
 import { Deposit } from '@/components/Deposit';
+import { ViewPositions } from '@/components/ViewPositions';
 import { PlaceOrder } from '@/components/PlaceOrder';
 import { BalanceDisplay } from '@/components/BalanceDisplay';
+import { TestnetFaucet } from '@/components/TestnetFaucet';
+import { TradeHistory } from '@/components/TradeHistory';
 
 export default function Home() {
   const privyAppId = process.env.NEXT_PUBLIC_PRIVY_APP_ID;
@@ -59,7 +62,15 @@ export default function Home() {
             
             <Deposit />
             
-            <PlaceOrder />
+            <TestnetFaucet />
+            
+            <ViewPositions />
+            
+            <PlaceOrder mode="close" />
+            
+            <PlaceOrder mode="open" />
+            
+            <TradeHistory />
           </div>
         </div>
       </main>

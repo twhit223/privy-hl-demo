@@ -3,12 +3,11 @@
 import { usePrivy, useWallets } from '@privy-io/react-auth';
 import { useState, useEffect, useMemo } from 'react';
 import { createPublicClient, http, formatUnits, getAddress } from 'viem';
-import { arbitrum, arbitrumSepolia } from 'viem/chains';
+import { arbitrum } from 'viem/chains';
 import * as hl from '@nktkas/hyperliquid';
 
 // USDC contract addresses
 const USDC_MAINNET = '0xaf88d065e77c8cC2239327C5EDb3A432268e5831';
-const USDC_SEPOLIA = '0x75faf114eafb1BDbe2F0316DF893fd58Ce9AF70E'; // May need to be updated
 
 // ERC-20 ABI for balanceOf
 const ERC20_ABI = [
@@ -27,12 +26,12 @@ export function BalanceDisplay() {
   
   const [balances, setBalances] = useState<{
     arbitrumMainnet: string | null;
-    arbitrumSepolia: string | null;
+    arbitrumETH: string | null;
     hyperliquidMainnet: string | null;
     hyperliquidTestnet: string | null;
   }>({
     arbitrumMainnet: null,
-    arbitrumSepolia: null,
+    arbitrumETH: null,
     hyperliquidMainnet: null,
     hyperliquidTestnet: null,
   });
@@ -62,14 +61,9 @@ export function BalanceDisplay() {
       const walletAddress = ethereumWallets[0].address as `0x${string}`;
       const checksummedAddress = getAddress(walletAddress);
 
-      // Create public clients for Arbitrum networks
+      // Create public client for Arbitrum mainnet
       const arbitrumClient = createPublicClient({
         chain: arbitrum,
-        transport: http(),
-      });
-
-      const arbitrumSepoliaClient = createPublicClient({
-        chain: arbitrumSepolia,
         transport: http(),
       });
 
@@ -88,19 +82,16 @@ export function BalanceDisplay() {
         arbitrumMainnetBalance = 'Error';
       }
 
-      // Fetch Arbitrum Sepolia USDC balance
-      let arbitrumSepoliaBalance = '0';
+      // Fetch Arbitrum ETH balance
+      let arbitrumETHBalance = '0';
       try {
-        const balance = await arbitrumSepoliaClient.readContract({
-          address: getAddress(USDC_SEPOLIA),
-          abi: ERC20_ABI,
-          functionName: 'balanceOf',
-          args: [checksummedAddress],
+        const balance = await arbitrumClient.getBalance({
+          address: checksummedAddress,
         });
-        arbitrumSepoliaBalance = formatUnits(balance as bigint, 6);
+        arbitrumETHBalance = formatUnits(balance, 18); // ETH has 18 decimals
       } catch (err) {
-        console.error('Error fetching Arbitrum Sepolia balance:', err);
-        arbitrumSepoliaBalance = 'Error';
+        console.error('Error fetching Arbitrum ETH balance:', err);
+        arbitrumETHBalance = 'Error';
       }
 
       // Fetch Hyperliquid mainnet balance
@@ -148,12 +139,12 @@ export function BalanceDisplay() {
         }
       }
 
-      setBalances({
-        arbitrumMainnet: arbitrumMainnetBalance,
-        arbitrumSepolia: arbitrumSepoliaBalance,
-        hyperliquidMainnet: hyperliquidMainnetBalance,
-        hyperliquidTestnet: hyperliquidTestnetBalance,
-      });
+        setBalances({
+          arbitrumMainnet: arbitrumMainnetBalance,
+          arbitrumETH: arbitrumETHBalance,
+          hyperliquidMainnet: hyperliquidMainnetBalance,
+          hyperliquidTestnet: hyperliquidTestnetBalance,
+        });
     } catch (err) {
       console.error('Error fetching balances:', err);
       setError(err instanceof Error ? err.message : 'Failed to fetch balances');
@@ -208,6 +199,14 @@ export function BalanceDisplay() {
     return num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   };
 
+  const formatETHBalance = (balance: string | null) => {
+    if (balance === null) return 'Loading...';
+    if (balance === 'Error') return 'Error';
+    const num = parseFloat(balance);
+    if (isNaN(num)) return '0.000000';
+    return num.toLocaleString('en-US', { minimumFractionDigits: 6, maximumFractionDigits: 6 });
+  };
+
   return (
     <div className="p-6 border rounded-lg bg-zinc-50 dark:bg-zinc-900">
       <div className="flex items-center justify-between mb-4">
@@ -227,7 +226,20 @@ export function BalanceDisplay() {
         </div>
       )}
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="p-4 bg-white dark:bg-zinc-800 border rounded-lg">
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
+              Arbitrum ETH
+            </h3>
+            <span className="text-xs text-zinc-500 dark:text-zinc-400">On-chain</span>
+          </div>
+          <p className="text-2xl font-semibold text-zinc-900 dark:text-zinc-100">
+            {formatETHBalance(balances.arbitrumETH)}
+          </p>
+          <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">ETH</p>
+        </div>
+
         <div className="p-4 bg-white dark:bg-zinc-800 border rounded-lg">
           <div className="flex items-center justify-between mb-2">
             <h3 className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
@@ -237,19 +249,6 @@ export function BalanceDisplay() {
           </div>
           <p className="text-2xl font-semibold text-zinc-900 dark:text-zinc-100">
             {formatBalance(balances.arbitrumMainnet)}
-          </p>
-          <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">USDC</p>
-        </div>
-
-        <div className="p-4 bg-white dark:bg-zinc-800 border rounded-lg">
-          <div className="flex items-center justify-between mb-2">
-            <h3 className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
-              Arbitrum Sepolia USDC
-            </h3>
-            <span className="text-xs text-zinc-500 dark:text-zinc-400">On-chain</span>
-          </div>
-          <p className="text-2xl font-semibold text-zinc-900 dark:text-zinc-100">
-            {formatBalance(balances.arbitrumSepolia)}
           </p>
           <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">USDC</p>
         </div>

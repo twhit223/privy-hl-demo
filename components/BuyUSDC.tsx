@@ -62,7 +62,8 @@ export function BuyUSDC() {
       
       // Fund wallet with USDC on Arbitrum
       // Privy's fundWallet will open a modal with payment options including Apple Pay/Google Pay
-      // Users can pay with Apple Pay/Google Pay without signing up for Coinbase or MoonPay
+      // Using Coinbase CDP SDK for onramp (configured in Privy dashboard)
+      // Users can pay with Apple Pay/Google Pay without signing up for Coinbase
       // Privy handles the payment processing in the background
       const result = await fundWallet({
         address: primaryWallet.address,
@@ -70,6 +71,9 @@ export function BuyUSDC() {
           chain: arbitrum, // Arbitrum mainnet
           asset: 'USDC', // Fund with USDC
           amount: amount, // Amount in USD
+          card: {
+            preferredProvider: 'coinbase', // Use Coinbase onramp
+          },
         },
       });
 
@@ -174,7 +178,7 @@ export function BuyUSDC() {
           <div className="p-3 bg-yellow-50 dark:bg-yellow-900/30 border border-yellow-200 dark:border-yellow-800 rounded-lg">
             <p className="text-xs text-yellow-800 dark:text-yellow-200">
               <strong>Payment Options:</strong> You can pay with Apple Pay or Google Pay (if available on your device), 
-              or use a credit/debit card. No sign-up required for Coinbase or MoonPay - Privy handles everything!
+              or use a credit/debit card. Powered by Coinbase onramp - no sign-up required!
               USDC will be sent directly to your wallet on Arbitrum.
             </p>
           </div>
@@ -223,12 +227,14 @@ export function BuyUSDC() {
                     <li>Select your app (App ID: {process.env.NEXT_PUBLIC_PRIVY_APP_ID})</li>
                     <li>Navigate to <strong>"User management" → "Account funding"</strong></li>
                     <li>Enable <strong>"Pay with card"</strong></li>
+                    <li>Configure <strong>Coinbase onramp</strong> as your payment provider</li>
+                    <li>If needed, add your Coinbase CDP API credentials (from <a href="https://portal.cdp.coinbase.com" target="_blank" rel="noopener noreferrer" className="underline">Coinbase Developer Platform</a>)</li>
                     <li>Set your desired network (Arbitrum) and recommended amount</li>
                     <li>Save the changes and refresh this page</li>
                   </ol>
                   <p className="text-xs text-blue-700 dark:text-blue-300 mt-2">
-                    <strong>Note:</strong> Once enabled, users can pay with Apple Pay/Google Pay directly without 
-                    signing up for Coinbase or MoonPay. Privy handles the payment processing in the background.
+                    <strong>Note:</strong> Coinbase CDP SDK (@coinbase/cdp-sdk) is installed. Once configured in the dashboard, 
+                    users can pay with Apple Pay/Google Pay directly without signing up for Coinbase. Privy handles the integration.
                   </p>
                   <p className="text-xs text-blue-700 dark:text-blue-300 mt-2">
                     <strong>Alternative:</strong> You can manually send USDC to your wallet address from an exchange or another wallet.
