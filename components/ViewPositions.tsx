@@ -4,6 +4,8 @@ import { usePrivy, useWallets } from '@privy-io/react-auth';
 import { useState, useEffect, useMemo } from 'react';
 import { getAddress } from 'viem';
 import * as hl from '@nktkas/hyperliquid';
+import { useHyperliquidAssets } from '@/hooks/useHyperliquidAssets';
+import { useHyperliquidPrices } from '@/hooks/useHyperliquidPrices';
 
 interface Position {
   asset: number;
@@ -38,6 +40,12 @@ export function ViewPositions() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const isTestnet = process.env.NEXT_PUBLIC_HYPERLIQUID_TESTNET === 'true';
+  
+  // Use cached asset metadata
+  const { assetMap, meta } = useHyperliquidAssets(isTestnet);
+  const { fetchPrices, getPrice } = useHyperliquidPrices(isTestnet);
+
   // Get Ethereum embedded wallets
   const ethereumWallets = useMemo(() => {
     return wallets.filter(
@@ -57,11 +65,10 @@ export function ViewPositions() {
     setError(null);
 
     try {
-      const isTestnet = process.env.NEXT_PUBLIC_HYPERLIQUID_TESTNET === 'true';
       const walletAddress = ethereumWallets[0].address as `0x${string}`;
       const checksummedAddress = getAddress(walletAddress);
 
-      // Initialize InfoClient for testnet
+      // Initialize InfoClient
       const transport = new hl.HttpTransport({ isTestnet });
       const infoClient = new hl.InfoClient({ transport });
 
@@ -70,12 +77,11 @@ export function ViewPositions() {
         user: checksummedAddress,
       });
 
-      // Get asset metadata and current prices
-      const [meta, contexts] = await infoClient.metaAndAssetCtxs();
-      const assetMap: Record<number, string> = {};
-      meta.universe?.forEach((asset, index) => {
-        assetMap[index] = asset.name || `Asset ${index}`;
-      });
+      // Fetch prices (using cached asset metadata)
+      const contexts = await fetchPrices();
+      if (!contexts) {
+        throw new Error('Failed to fetch price data');
+      }
 
       // Parse positions from clearinghouseState
       const openPositions: Position[] = [];
@@ -106,8 +112,8 @@ export function ViewPositions() {
             
             // Get current price (mark price) for this asset
             let currentPrice: string | null = null;
-            if (finalAssetId !== undefined && contexts[finalAssetId]?.markPx) {
-              currentPrice = contexts[finalAssetId].markPx;
+            if (finalAssetId !== undefined) {
+              currentPrice = getPrice(finalAssetId) || contexts[finalAssetId]?.markPx || null;
             }
             
             // Get funding rate for this asset

@@ -5,6 +5,8 @@ import { useState, useMemo, useEffect } from 'react';
 import { getAddress } from 'viem';
 import * as hl from '@nktkas/hyperliquid';
 import type { AbstractViemLocalAccount } from '@nktkas/hyperliquid/signing';
+import { useHyperliquidAssets } from '@/hooks/useHyperliquidAssets';
+import { useHyperliquidPrices } from '@/hooks/useHyperliquidPrices';
 
 interface Position {
   asset: number;
@@ -53,6 +55,10 @@ export function PlaceOrder(props?: PlaceOrderProps) {
   const [selectedPositionAssetSzDecimals, setSelectedPositionAssetSzDecimals] = useState<number | null>(null);
   const [selectedPositionAssetTickSize, setSelectedPositionAssetTickSize] = useState<number | null>(null);
 
+  // Use cached asset metadata
+  const { assets: cachedAssets, getAssetMetadata, assetMap, meta } = useHyperliquidAssets(isTestnet);
+  const { fetchPrices, getPrice } = useHyperliquidPrices(isTestnet);
+
   // Get Ethereum embedded wallets
   const ethereumWallets = useMemo(() => {
     return wallets.filter(
@@ -65,35 +71,24 @@ export function PlaceOrder(props?: PlaceOrderProps) {
     );
   }, [wallets]);
 
-  // Fetch available assets
-  const fetchAvailableAssets = async () => {
-    if (ethereumWallets.length === 0) return;
-
-    try {
-      const transport = new hl.HttpTransport({ isTestnet });
-      const infoClient = new hl.InfoClient({ transport });
-      const [meta] = await infoClient.metaAndAssetCtxs();
+  // Set available assets from cache
+  useEffect(() => {
+    if (cachedAssets.length > 0 && mode === 'open') {
+      setAvailableAssets(cachedAssets);
       
-      const assets = meta.universe.map((asset, index) => ({
-        id: index,
-        name: asset.name || `Asset ${index}`,
-      }));
-      
-      setAvailableAssets(assets);
-      
-      // Set default to BTC if available, otherwise first asset
-      const btcIndex = assets.findIndex((a) => a.name === 'BTC');
-      if (btcIndex !== -1) {
-        setSelectedAssetId(btcIndex);
-        setSelectedAssetName('BTC');
-      } else if (assets.length > 0) {
-        setSelectedAssetId(0);
-        setSelectedAssetName(assets[0].name);
+      // Set default to BTC if available, otherwise first asset (only if not already set)
+      if (selectedAssetId === null) {
+        const btcIndex = cachedAssets.findIndex((a) => a.name === 'BTC');
+        if (btcIndex !== -1) {
+          setSelectedAssetId(btcIndex);
+          setSelectedAssetName('BTC');
+        } else if (cachedAssets.length > 0) {
+          setSelectedAssetId(0);
+          setSelectedAssetName(cachedAssets[0].name);
+        }
       }
-    } catch (err) {
-      console.error('Error fetching available assets:', err);
     }
-  };
+  }, [cachedAssets, mode]); // Removed selectedAssetId from deps to avoid loops
 
   // Fetch selected asset price and available balance
   const fetchMarketData = async () => {
@@ -101,25 +96,18 @@ export function PlaceOrder(props?: PlaceOrderProps) {
 
     setIsLoadingPrice(true);
     try {
-      const transport = new hl.HttpTransport({ isTestnet });
-      const infoClient = new hl.InfoClient({ transport });
-
-      // Get current asset price (mark price) using metaAndAssetCtxs
-      // Reference: https://docs.privy.io/recipes/hyperliquid/trading-patterns#always-validate-prices
-      const [meta, contexts] = await infoClient.metaAndAssetCtxs();
-      
-      const asset = meta.universe[selectedAssetId];
+      // Get asset metadata from cache
+      const asset = getAssetMetadata(selectedAssetId);
       if (asset) {
         console.log('=== FETCHING MARKET DATA ===');
         console.log('Asset:', asset.name, 'Index:', selectedAssetId);
-        console.log('Asset metadata:', JSON.stringify(asset, null, 2));
         
         // Extract szDecimals for size validation
         if (asset.szDecimals !== undefined && asset.szDecimals !== null) {
           console.log('✓ szDecimals found:', asset.szDecimals);
           setSzDecimals(asset.szDecimals);
         } else {
-          console.error('✗ szDecimals not found in asset metadata', JSON.stringify(asset, null, 2));
+          console.error('✗ szDecimals not found in asset metadata');
         }
         
         // Calculate tick size from price precision rules
@@ -131,17 +119,27 @@ export function PlaceOrder(props?: PlaceOrderProps) {
         console.log('✓ Tick size decimal places:', maxPriceDecimals);
         setTickSize(calculatedTickSize);
         
-        if (contexts[selectedAssetId]) {
+        // Fetch prices
+        const contexts = await fetchPrices();
+        if (contexts && contexts[selectedAssetId]) {
           const assetContext = contexts[selectedAssetId];
           if (assetContext.markPx) {
             setAssetPrice(parseFloat(assetContext.markPx));
           }
+        } else {
+          // Try to get from cache
+          const cachedPrice = getPrice(selectedAssetId);
+          if (cachedPrice) {
+            setAssetPrice(parseFloat(cachedPrice));
+          }
         }
       } else {
-        console.error('✗ Asset not found in universe');
+        console.error('✗ Asset not found in cache');
       }
 
       // Get available balance
+      const transport = new hl.HttpTransport({ isTestnet });
+      const infoClient = new hl.InfoClient({ transport });
       const walletAddress = ethereumWallets[0].address as `0x${string}`;
       const checksummedAddress = getAddress(walletAddress);
       const clearinghouseState = await infoClient.clearinghouseState({
@@ -182,12 +180,6 @@ export function PlaceOrder(props?: PlaceOrderProps) {
         user: checksummedAddress,
       });
 
-      const [meta, contexts] = await infoClient.metaAndAssetCtxs();
-      const assetMap: Record<number, string> = {};
-      meta.universe?.forEach((asset, index) => {
-        assetMap[index] = asset.name || `Asset ${index}`;
-      });
-
       const openPositions: Position[] = [];
       if (clearinghouseState.assetPositions) {
         clearinghouseState.assetPositions.forEach((pos) => {
@@ -200,8 +192,8 @@ export function PlaceOrder(props?: PlaceOrderProps) {
             const isLong = parseFloat(pos.position.szi || '0') > 0;
             
             let finalAssetId = assetId;
-            if (assetNameFromCoin) {
-              const foundAssetIndex = meta.universe?.findIndex((a) => a.name === assetNameFromCoin);
+            if (assetNameFromCoin && meta?.universe) {
+              const foundAssetIndex = meta.universe.findIndex((a: any) => a.name === assetNameFromCoin);
               if (foundAssetIndex !== undefined && foundAssetIndex !== -1) {
                 finalAssetId = foundAssetIndex;
               }
@@ -235,11 +227,8 @@ export function PlaceOrder(props?: PlaceOrderProps) {
 
     setIsLoadingPrice(true);
     try {
-      const transport = new hl.HttpTransport({ isTestnet });
-      const infoClient = new hl.InfoClient({ transport });
-      const [meta, contexts] = await infoClient.metaAndAssetCtxs();
-      
-      const asset = meta.universe[position.asset];
+      // Get asset metadata from cache
+      const asset = getAssetMetadata(position.asset);
       if (asset) {
         setSelectedPositionAssetId(position.asset);
         
@@ -251,8 +240,17 @@ export function PlaceOrder(props?: PlaceOrderProps) {
         const calculatedTickSize = Math.pow(10, -maxPriceDecimals);
         setSelectedPositionAssetTickSize(calculatedTickSize);
         
-        if (contexts[position.asset]?.markPx) {
-          setSelectedPositionAssetPrice(parseFloat(contexts[position.asset].markPx));
+        // Fetch prices
+        const contexts = await fetchPrices();
+        const markPx = contexts?.[position.asset]?.markPx;
+        if (markPx) {
+          setSelectedPositionAssetPrice(parseFloat(markPx));
+        } else {
+          // Try to get from cache
+          const cachedPrice = getPrice(position.asset);
+          if (cachedPrice) {
+            setSelectedPositionAssetPrice(parseFloat(cachedPrice));
+          }
         }
       }
     } catch (err) {
@@ -262,12 +260,7 @@ export function PlaceOrder(props?: PlaceOrderProps) {
     }
   };
 
-  // Auto-fetch available assets when wallet is available
-  useEffect(() => {
-    if (authenticated && walletsReady && ethereumWallets.length > 0 && mode === 'open') {
-      fetchAvailableAssets();
-    }
-  }, [authenticated, walletsReady, ethereumWallets.length, mode]);
+  // Assets are now loaded from cache via useEffect above
 
   // Auto-fetch market data when selected asset changes
   useEffect(() => {

@@ -47,6 +47,7 @@ export function Deposit() {
   
   const [amount, setAmount] = useState<string>('');
   const [isSending, setIsSending] = useState(false);
+  const [isSponsored, setIsSponsored] = useState(false); // Toggle for gas sponsorship
   const [txResult, setTxResult] = useState<{
     success: boolean;
     message: string;
@@ -160,11 +161,6 @@ export function Deposit() {
       // Send transaction on Arbitrum mainnet
       // Following Privy guide format: https://docs.privy.io/recipes/hyperliquid-guide
       // Note: React hook uses chainId (not caip2 like Node SDK), but structure is similar
-      // 
-      // NOTE: Gas sponsorship issue - Even with TEE enabled, gas sponsorship (sponsor: true) 
-      // causes "UserOperation reverted during simulation" errors. Transaction works fine without 
-      // sponsorship when user has ETH for gas. This may be due to paymaster configuration, 
-      // rate limits, or smart wallet token storage. For now, using sponsor: false.
       const tx = await sendTransaction(
         {
           to: usdcAddress as `0x${string}`,
@@ -173,8 +169,7 @@ export function Deposit() {
           chainId: ARBITRUM_CHAIN_ID, // Arbitrum mainnet chain ID (42161)
         },
         {
-          sponsor: false, // Gas sponsorship disabled - user will pay gas fees
-          // TODO: Investigate why gas sponsorship fails even with TEE enabled
+          sponsor: isSponsored, // Use toggle state for gas sponsorship
         }
       );
 
@@ -309,8 +304,9 @@ export function Deposit() {
             The wallet will automatically switch to Arbitrum if needed.
           </p>
           <p className="text-xs text-yellow-700 dark:text-yellow-300 mt-2 font-medium">
-            <strong>Gas Sponsorship:</strong> Disabled - You will need ETH in your wallet to pay for gas fees.
-            Make sure you have sufficient ETH balance on Arbitrum to cover the transaction.
+            <strong>Gas Sponsorship:</strong> {isSponsored 
+              ? 'Enabled - Privy app will pay gas fees using preloaded $10 balance.'
+              : 'Disabled - You will need ETH in your wallet to pay for gas fees. Make sure you have sufficient ETH balance on Arbitrum to cover the transaction.'}
           </p>
         </div>
 
@@ -383,6 +379,34 @@ export function Deposit() {
             <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
               Minimum: 5 USDC
             </p>
+          </div>
+
+          <div className="flex items-center justify-between p-4 bg-zinc-100 dark:bg-zinc-800 rounded-lg border border-zinc-200 dark:border-zinc-700">
+            <div className="flex-1">
+              <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-1">
+                Gas Sponsorship
+              </label>
+              <p className="text-xs text-zinc-600 dark:text-zinc-400">
+                {isSponsored 
+                  ? 'Privy app will pay gas fees (sponsored)'
+                  : 'You will pay gas fees from your Arbitrum wallet (unsponsored)'}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setIsSponsored(!isSponsored)}
+              className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 ${
+                isSponsored ? 'bg-blue-600' : 'bg-zinc-300 dark:bg-zinc-600'
+              }`}
+              role="switch"
+              aria-checked={isSponsored}
+            >
+              <span
+                className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                  isSponsored ? 'translate-x-5' : 'translate-x-0'
+                }`}
+              />
+            </button>
           </div>
         </div>
 
