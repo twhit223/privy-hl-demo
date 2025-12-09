@@ -1,3 +1,7 @@
+# privy-hl-demo
+
+A simple demo app that uses Privy to connect and trade on Hyperliquid
+
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
 ## Getting Started
