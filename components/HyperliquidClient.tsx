@@ -147,7 +147,7 @@ export function HyperliquidClient() {
 
   return (
     <div className="p-6 border rounded-lg bg-zinc-50 dark:bg-zinc-900">
-      <h2 className="text-xl font-semibold mb-4">Step 3: Hyperliquid Client</h2>
+      <h2 className="text-xl font-semibold mb-4">Step 4: Hyperliquid Client</h2>
       
       <div className="space-y-4">
         {clientStatus.initialized ? (

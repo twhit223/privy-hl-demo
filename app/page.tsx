@@ -3,11 +3,8 @@ import { AuthButton } from '@/components/AuthButton';
 import { HyperliquidClient } from '@/components/HyperliquidClient';
 import { BuyUSDC } from '@/components/BuyUSDC';
 import { Deposit } from '@/components/Deposit';
-import { ViewPositions } from '@/components/ViewPositions';
-import { PlaceOrder } from '@/components/PlaceOrder';
-import { BalanceDisplay } from '@/components/BalanceDisplay';
 import { TestnetFaucet } from '@/components/TestnetFaucet';
-import { TradeHistory } from '@/components/TradeHistory';
+import { TradingSection } from '@/components/TradingSection';
 
 export default function Home() {
   const privyAppId = process.env.NEXT_PUBLIC_PRIVY_APP_ID;
@@ -21,56 +18,56 @@ export default function Home() {
             Hyperliquid Privy Quickstart
           </h1>
           <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Steps 3.5-5: Buy USDC, Deposit, & Place Orders
+            Onboard & Trade on Hyperliquid with a Privy Wallet
           </p>
           
-          <div className="mt-8 w-full space-y-4">
-            <BalanceDisplay />
-            
-            <div className="p-4 border rounded-lg bg-zinc-50 dark:bg-zinc-900">
-              <h2 className="text-xl font-semibold mb-4">Setup Verification</h2>
-              <div className="space-y-2 text-sm">
-                <div className="flex items-center gap-2">
-                  <span className="font-medium">Privy App ID:</span>
-                  <span className={privyAppId ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}>
-                    {privyAppId ? "✓ Configured" : "✗ Missing"}
-                  </span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="font-medium">Network:</span>
-                  <span className="text-blue-600 dark:text-blue-400">
-                    {isTestnet ? "Testnet" : "Mainnet"}
-                  </span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="font-medium">Environment:</span>
-                  <span className="text-green-600 dark:text-green-400">✓ Development</span>
+          <div className="mt-8 w-full space-y-8">
+            {/* Onboarding Section */}
+            <div className="space-y-4">
+              <h2 className="text-2xl font-bold mb-6 pb-2 border-b border-zinc-300 dark:border-zinc-700">
+                Onboarding
+              </h2>
+              
+              <div className="p-4 border rounded-lg bg-zinc-50 dark:bg-zinc-900">
+                <h3 className="text-xl font-semibold mb-4">Step 1: Setup Verification</h3>
+                <div className="space-y-2 text-sm">
+                  <div className="flex items-center gap-2">
+                    <span className="font-medium">Privy App ID:</span>
+                    <span className={privyAppId ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}>
+                      {privyAppId ? "✓ Configured" : "✗ Missing"}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="font-medium">Network:</span>
+                    <span className="text-blue-600 dark:text-blue-400">
+                      {isTestnet ? "Testnet" : "Mainnet"}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="font-medium">Environment:</span>
+                    <span className="text-green-600 dark:text-green-400">✓ Development</span>
+                  </div>
                 </div>
               </div>
+              
+              <div className="p-4 border rounded-lg bg-zinc-50 dark:bg-zinc-900">
+                <h3 className="text-xl font-semibold mb-4">Step 2: Authentication</h3>
+                <AuthButton />
+              </div>
+              
+              <WalletSetup />
+              
+              <HyperliquidClient />
+              
+              <BuyUSDC />
+              
+              <Deposit />
+              
+              <TestnetFaucet />
             </div>
-            
-            <div className="p-4 border rounded-lg bg-zinc-50 dark:bg-zinc-900">
-              <h2 className="text-xl font-semibold mb-4">Authentication</h2>
-              <AuthButton />
-            </div>
-            
-            <WalletSetup />
-            
-            <HyperliquidClient />
-            
-            <BuyUSDC />
-            
-            <Deposit />
-            
-            <TestnetFaucet />
-            
-            <ViewPositions />
-            
-            <PlaceOrder mode="close" />
-            
-            <PlaceOrder mode="open" />
-            
-            <TradeHistory />
+
+            {/* Trading Section */}
+            <TradingSection />
           </div>
         </div>
       </main>

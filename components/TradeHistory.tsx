@@ -4,6 +4,7 @@ import { usePrivy, useWallets } from '@privy-io/react-auth';
 import { useState, useEffect, useMemo } from 'react';
 import { getAddress } from 'viem';
 import * as hl from '@nktkas/hyperliquid';
+import { useNetwork } from '@/contexts/NetworkContext';
 
 interface Trade {
   coin: string;
@@ -23,6 +24,7 @@ export function TradeHistory() {
   const [trades, setTrades] = useState<Trade[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isExpanded, setIsExpanded] = useState(false);
 
   // Get Ethereum embedded wallets
   const ethereumWallets = useMemo(() => {
@@ -36,6 +38,9 @@ export function TradeHistory() {
     );
   }, [wallets]);
 
+  // Network context
+  const { isTestnet } = useNetwork();
+
   const fetchTradeHistory = async () => {
     if (ethereumWallets.length === 0) return;
 
@@ -43,7 +48,6 @@ export function TradeHistory() {
     setError(null);
 
     try {
-      const isTestnet = process.env.NEXT_PUBLIC_HYPERLIQUID_TESTNET === 'true';
       const walletAddress = ethereumWallets[0].address as `0x${string}`;
       const checksummedAddress = getAddress(walletAddress);
 
@@ -95,16 +99,19 @@ export function TradeHistory() {
 
       // Process and sort trades (most recent first)
       const processedTrades: Trade[] = userFills
-        .map((fill: any) => ({
-          coin: fill.coin || fill.symbol || 'Unknown',
-          side: fill.side === 'B' || fill.side === 'buy' || fill.side === 'Buy' ? 'B' : 'A',
-          px: fill.px || fill.price || '0',
-          sz: fill.sz || fill.size || fill.quantity || '0',
-          time: fill.time || fill.timestamp || Date.now(),
-          closedPnl: fill.closedPnl,
-          oid: fill.oid || fill.orderId || 0,
-          hash: fill.hash || fill.txHash || '',
-        }))
+        .map((fill: any) => {
+          const side: 'B' | 'A' = fill.side === 'B' || fill.side === 'buy' || fill.side === 'Buy' ? 'B' : 'A';
+          return {
+            coin: fill.coin || fill.symbol || 'Unknown',
+            side,
+            px: fill.px || fill.price || '0',
+            sz: fill.sz || fill.size || fill.quantity || '0',
+            time: fill.time || fill.timestamp || Date.now(),
+            closedPnl: fill.closedPnl,
+            oid: fill.oid || fill.orderId || 0,
+            hash: fill.hash || fill.txHash || '',
+          };
+        })
         .sort((a, b) => b.time - a.time); // Sort by time descending
 
       setTrades(processedTrades);
@@ -121,7 +128,7 @@ export function TradeHistory() {
     }
   };
 
-  // Auto-fetch trade history when wallet is available
+  // Auto-fetch trade history when wallet is available or network changes
   useEffect(() => {
     if (authenticated && walletsReady && ethereumWallets.length > 0) {
       fetchTradeHistory();
@@ -129,7 +136,7 @@ export function TradeHistory() {
       const interval = setInterval(fetchTradeHistory, 30000);
       return () => clearInterval(interval);
     }
-  }, [authenticated, walletsReady, ethereumWallets.length]);
+  }, [authenticated, walletsReady, ethereumWallets.length, isTestnet]);
 
   const formatDate = (timestamp: number) => {
     const date = new Date(timestamp);
@@ -208,23 +215,24 @@ export function TradeHistory() {
           No trades found. Start trading to see your history here.
         </div>
       ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-zinc-300 dark:border-zinc-700">
-                <th className="text-left py-2 px-3 font-medium text-zinc-700 dark:text-zinc-300">Time</th>
-                <th className="text-left py-2 px-3 font-medium text-zinc-700 dark:text-zinc-300">Asset</th>
-                <th className="text-left py-2 px-3 font-medium text-zinc-700 dark:text-zinc-300">Side</th>
-                <th className="text-right py-2 px-3 font-medium text-zinc-700 dark:text-zinc-300">Price</th>
-                <th className="text-right py-2 px-3 font-medium text-zinc-700 dark:text-zinc-300">Size</th>
-                <th className="text-right py-2 px-3 font-medium text-zinc-700 dark:text-zinc-300">Value</th>
-                {trades.some(t => t.closedPnl) && (
-                  <th className="text-right py-2 px-3 font-medium text-zinc-700 dark:text-zinc-300">P&L</th>
-                )}
-              </tr>
-            </thead>
-            <tbody>
-              {trades.map((trade, index) => {
+        <>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-zinc-300 dark:border-zinc-700">
+                  <th className="text-left py-2 px-3 font-medium text-zinc-700 dark:text-zinc-300">Time</th>
+                  <th className="text-left py-2 px-3 font-medium text-zinc-700 dark:text-zinc-300">Asset</th>
+                  <th className="text-left py-2 px-3 font-medium text-zinc-700 dark:text-zinc-300">Side</th>
+                  <th className="text-right py-2 px-3 font-medium text-zinc-700 dark:text-zinc-300">Price</th>
+                  <th className="text-right py-2 px-3 font-medium text-zinc-700 dark:text-zinc-300">Size</th>
+                  <th className="text-right py-2 px-3 font-medium text-zinc-700 dark:text-zinc-300">Value</th>
+                  {trades.some(t => t.closedPnl) && (
+                    <th className="text-right py-2 px-3 font-medium text-zinc-700 dark:text-zinc-300">P&L</th>
+                  )}
+                </tr>
+              </thead>
+              <tbody>
+                {(isExpanded ? trades : trades.slice(0, 5)).map((trade, index) => {
                 const value = parseFloat(trade.px) * parseFloat(trade.sz);
                 const isBuy = trade.side === 'B';
                 return (
@@ -279,15 +287,29 @@ export function TradeHistory() {
                   </tr>
                 );
               })}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {trades.length > 0 && (
-        <div className="mt-4 text-xs text-zinc-500 dark:text-zinc-400 text-center">
-          Showing {trades.length} {trades.length === 1 ? 'trade' : 'trades'}
-        </div>
+              </tbody>
+            </table>
+          </div>
+          
+          {trades.length > 5 && (
+            <div className="mt-4 flex items-center justify-center">
+              <button
+                onClick={() => setIsExpanded(!isExpanded)}
+                className="px-4 py-2 text-sm bg-zinc-200 dark:bg-zinc-700 text-zinc-700 dark:text-zinc-300 rounded hover:bg-zinc-300 dark:hover:bg-zinc-600 transition-colors"
+              >
+                {isExpanded 
+                  ? `Show Less (${trades.length} total)` 
+                  : `Show All (${trades.length} total)`}
+              </button>
+            </div>
+          )}
+          
+          {trades.length > 0 && (
+            <div className="mt-2 text-xs text-zinc-500 dark:text-zinc-400 text-center">
+              Showing {isExpanded ? trades.length : Math.min(5, trades.length)} of {trades.length} {trades.length === 1 ? 'trade' : 'trades'}
+            </div>
+          )}
+        </>
       )}
     </div>
   );

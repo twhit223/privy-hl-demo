@@ -127,7 +127,7 @@ export function TestnetFaucet() {
 
   return (
     <div className="p-6 border rounded-lg bg-zinc-50 dark:bg-zinc-900">
-      <h2 className="text-xl font-semibold mb-4">Request Testnet USDC from Hyperliquid</h2>
+      <h2 className="text-xl font-semibold mb-4">Step 7: Request Testnet USDC from Hyperliquid</h2>
       
       <div className="space-y-4">
         <div className="p-4 bg-blue-50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-800 rounded-lg">

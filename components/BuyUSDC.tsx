@@ -143,7 +143,7 @@ export function BuyUSDC() {
 
   return (
     <div className="p-6 border rounded-lg bg-zinc-50 dark:bg-zinc-900">
-      <h2 className="text-xl font-semibold mb-4">Step 3.5: Buy USDC on Arbitrum</h2>
+      <h2 className="text-xl font-semibold mb-4">Step 5: Buy USDC on Arbitrum</h2>
       
       <div className="space-y-4">
         <div className="p-4 bg-blue-50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-800 rounded-lg">

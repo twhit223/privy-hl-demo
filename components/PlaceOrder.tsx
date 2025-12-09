@@ -7,14 +7,8 @@ import * as hl from '@nktkas/hyperliquid';
 import type { AbstractViemLocalAccount } from '@nktkas/hyperliquid/signing';
 import { useHyperliquidAssets } from '@/hooks/useHyperliquidAssets';
 import { useHyperliquidPrices } from '@/hooks/useHyperliquidPrices';
-
-interface Position {
-  asset: number;
-  assetName: string;
-  side: 'long' | 'short';
-  size: string;
-  entryPx: string;
-}
+import { useNetwork } from '@/contexts/NetworkContext';
+import { usePositions, type Position } from '@/hooks/usePositions';
 
 interface PlaceOrderProps {
   mode?: 'open' | 'close';
@@ -26,11 +20,13 @@ export function PlaceOrder(props?: PlaceOrderProps) {
   const { wallets, ready: walletsReady } = useWallets();
   const { signTypedData: privySignTypedData } = useSignTypedData();
   
+  // Network context
+  const { isTestnet } = useNetwork();
+  
   // Form state - Asset selection
   const [availableAssets, setAvailableAssets] = useState<Array<{ id: number; name: string }>>([]);
   const [selectedAssetId, setSelectedAssetId] = useState<number | null>(null);
   const [selectedAssetName, setSelectedAssetName] = useState<string>('');
-  const isTestnet = process.env.NEXT_PUBLIC_HYPERLIQUID_TESTNET === 'true';
   const [side, setSide] = useState<'buy' | 'sell'>('buy');
   const [inputMode, setInputMode] = useState<'asset' | 'usd'>('usd');
   const [size, setSize] = useState<string>('');
@@ -48,7 +44,6 @@ export function PlaceOrder(props?: PlaceOrderProps) {
   } | null>(null);
   
   // Position closing state
-  const [positions, setPositions] = useState<Position[]>([]);
   const [selectedPosition, setSelectedPosition] = useState<Position | null>(null);
   const [selectedPositionAssetId, setSelectedPositionAssetId] = useState<number | null>(null);
   const [selectedPositionAssetPrice, setSelectedPositionAssetPrice] = useState<number | null>(null);
@@ -58,6 +53,9 @@ export function PlaceOrder(props?: PlaceOrderProps) {
   // Use cached asset metadata
   const { assets: cachedAssets, getAssetMetadata, assetMap, meta } = useHyperliquidAssets(isTestnet);
   const { fetchPrices, getPrice } = useHyperliquidPrices(isTestnet);
+  
+  // Use shared positions hook (same data source as ViewPositions)
+  const { positions, accountSummary, fetchPositions: refreshPositions } = usePositions();
 
   // Get Ethereum embedded wallets
   const ethereumWallets = useMemo(() => {
@@ -71,70 +69,81 @@ export function PlaceOrder(props?: PlaceOrderProps) {
     );
   }, [wallets]);
 
+  // Reset selected asset when network changes (before assets load)
+  useEffect(() => {
+    if (mode === 'open') {
+      setSelectedAssetId(null);
+      setSelectedAssetName('');
+      setSize('');
+      setAssetPrice(null);
+    }
+  }, [isTestnet, mode]);
+
   // Set available assets from cache
   useEffect(() => {
     if (cachedAssets.length > 0 && mode === 'open') {
       setAvailableAssets(cachedAssets);
       
-      // Set default to BTC if available, otherwise first asset (only if not already set)
-      if (selectedAssetId === null) {
-        const btcIndex = cachedAssets.findIndex((a) => a.name === 'BTC');
-        if (btcIndex !== -1) {
-          setSelectedAssetId(btcIndex);
-          setSelectedAssetName('BTC');
-        } else if (cachedAssets.length > 0) {
-          setSelectedAssetId(0);
-          setSelectedAssetName(cachedAssets[0].name);
-        }
+      // Always reset to BTC when assets change (handles network switching)
+      // BTC has different asset IDs on testnet vs mainnet, so we need to re-select it
+      const btcIndex = cachedAssets.findIndex((a) => a.name === 'BTC');
+      if (btcIndex !== -1) {
+        setSelectedAssetId(btcIndex);
+        setSelectedAssetName('BTC');
+      } else if (cachedAssets.length > 0) {
+        setSelectedAssetId(0);
+        setSelectedAssetName(cachedAssets[0].name);
       }
     }
-  }, [cachedAssets, mode]); // Removed selectedAssetId from deps to avoid loops
+  }, [cachedAssets, mode]); // Removed isTestnet from deps since we handle it separately above
 
   // Fetch selected asset price and available balance
   const fetchMarketData = async () => {
     if (ethereumWallets.length === 0 || selectedAssetId === null) return;
 
+    // Verify asset exists in cache before proceeding
+    const asset = getAssetMetadata(selectedAssetId);
+    if (!asset) {
+      // Asset not in cache yet, wait for it to load
+      console.log('Asset not in cache yet, waiting for assets to load...');
+      return;
+    }
+
     setIsLoadingPrice(true);
     try {
-      // Get asset metadata from cache
-      const asset = getAssetMetadata(selectedAssetId);
-      if (asset) {
-        console.log('=== FETCHING MARKET DATA ===');
-        console.log('Asset:', asset.name, 'Index:', selectedAssetId);
-        
-        // Extract szDecimals for size validation
-        if (asset.szDecimals !== undefined && asset.szDecimals !== null) {
-          console.log('✓ szDecimals found:', asset.szDecimals);
-          setSzDecimals(asset.szDecimals);
-        } else {
-          console.error('✗ szDecimals not found in asset metadata');
-        }
-        
-        // Calculate tick size from price precision rules
-        // According to Privy docs: tick size = 10^(-maxPriceDecimals)
-        // For perps: MAX_DECIMALS = 6, so maxPriceDecimals = 6 - szDecimals
-        const maxPriceDecimals = 6 - (asset.szDecimals || 5);
-        const calculatedTickSize = Math.pow(10, -maxPriceDecimals);
-        console.log('✓ tickSize calculated:', calculatedTickSize, '(from maxPriceDecimals:', maxPriceDecimals, ', szDecimals:', asset.szDecimals, ')');
-        console.log('✓ Tick size decimal places:', maxPriceDecimals);
-        setTickSize(calculatedTickSize);
-        
-        // Fetch prices
-        const contexts = await fetchPrices();
-        if (contexts && contexts[selectedAssetId]) {
-          const assetContext = contexts[selectedAssetId];
-          if (assetContext.markPx) {
-            setAssetPrice(parseFloat(assetContext.markPx));
-          }
-        } else {
-          // Try to get from cache
-          const cachedPrice = getPrice(selectedAssetId);
-          if (cachedPrice) {
-            setAssetPrice(parseFloat(cachedPrice));
-          }
+      console.log('=== FETCHING MARKET DATA ===');
+      console.log('Asset:', asset.name, 'Index:', selectedAssetId);
+      
+      // Extract szDecimals for size validation
+      if (asset.szDecimals !== undefined && asset.szDecimals !== null) {
+        console.log('✓ szDecimals found:', asset.szDecimals);
+        setSzDecimals(asset.szDecimals);
+      } else {
+        console.error('✗ szDecimals not found in asset metadata');
+      }
+      
+      // Calculate tick size from price precision rules
+      // According to Privy docs: tick size = 10^(-maxPriceDecimals)
+      // For perps: MAX_DECIMALS = 6, so maxPriceDecimals = 6 - szDecimals
+      const maxPriceDecimals = 6 - (asset.szDecimals || 5);
+      const calculatedTickSize = Math.pow(10, -maxPriceDecimals);
+      console.log('✓ tickSize calculated:', calculatedTickSize, '(from maxPriceDecimals:', maxPriceDecimals, ', szDecimals:', asset.szDecimals, ')');
+      console.log('✓ Tick size decimal places:', maxPriceDecimals);
+      setTickSize(calculatedTickSize);
+      
+      // Fetch prices
+      const contexts = await fetchPrices();
+      if (contexts && contexts[selectedAssetId]) {
+        const assetContext = contexts[selectedAssetId];
+        if (assetContext.markPx) {
+          setAssetPrice(parseFloat(assetContext.markPx));
         }
       } else {
-        console.error('✗ Asset not found in cache');
+        // Try to get from cache
+        const cachedPrice = getPrice(selectedAssetId);
+        if (cachedPrice) {
+          setAssetPrice(parseFloat(cachedPrice));
+        }
       }
 
       // Get available balance
@@ -165,62 +174,6 @@ export function PlaceOrder(props?: PlaceOrderProps) {
     }
   };
 
-  // Fetch positions for closing mode
-  const fetchPositions = async () => {
-    if (ethereumWallets.length === 0 || mode !== 'close') return;
-
-    setIsLoadingPrice(true);
-    try {
-      const transport = new hl.HttpTransport({ isTestnet });
-      const infoClient = new hl.InfoClient({ transport });
-      const walletAddress = ethereumWallets[0].address as `0x${string}`;
-      const checksummedAddress = getAddress(walletAddress);
-
-      const clearinghouseState = await infoClient.clearinghouseState({
-        user: checksummedAddress,
-      });
-
-      const openPositions: Position[] = [];
-      if (clearinghouseState.assetPositions) {
-        clearinghouseState.assetPositions.forEach((pos) => {
-          const size = parseFloat(pos.position.szi || '0');
-          if (Math.abs(size) > 0) {
-            const assetNameFromCoin = pos.position.coin;
-            const assetId = (pos.position as any).asset || 0;
-            const assetNameFromMap = assetMap[assetId] || `Asset ${assetId}`;
-            const assetName = assetNameFromCoin || assetNameFromMap;
-            const isLong = parseFloat(pos.position.szi || '0') > 0;
-            
-            let finalAssetId = assetId;
-            if (assetNameFromCoin && meta?.universe) {
-              const foundAssetIndex = meta.universe.findIndex((a: any) => a.name === assetNameFromCoin);
-              if (foundAssetIndex !== undefined && foundAssetIndex !== -1) {
-                finalAssetId = foundAssetIndex;
-              }
-            }
-            
-            openPositions.push({
-              asset: finalAssetId,
-              assetName,
-              side: isLong ? 'long' : 'short',
-              size: Math.abs(size).toString(),
-              entryPx: pos.position.entryPx || '0',
-            });
-          }
-        });
-      }
-
-      setPositions(openPositions);
-    } catch (err) {
-      console.error('Error fetching positions:', err);
-      if (err instanceof Error && (err.message.includes('does not exist') || err.message.includes('not found'))) {
-        setPositions([]);
-      }
-    } finally {
-      setIsLoadingPrice(false);
-    }
-  };
-
   // Fetch market data for selected position when closing
   const fetchPositionMarketData = async (position: Position) => {
     if (ethereumWallets.length === 0) return;
@@ -240,16 +193,22 @@ export function PlaceOrder(props?: PlaceOrderProps) {
         const calculatedTickSize = Math.pow(10, -maxPriceDecimals);
         setSelectedPositionAssetTickSize(calculatedTickSize);
         
-        // Fetch prices
-        const contexts = await fetchPrices();
-        const markPx = contexts?.[position.asset]?.markPx;
-        if (markPx) {
-          setSelectedPositionAssetPrice(parseFloat(markPx));
+        // Always use currentPx from position (from shared hook - same data source)
+        // This ensures we're using the same price data as ViewPositions
+        if (position.currentPx) {
+          setSelectedPositionAssetPrice(parseFloat(position.currentPx));
         } else {
-          // Try to get from cache
-          const cachedPrice = getPrice(position.asset);
-          if (cachedPrice) {
-            setSelectedPositionAssetPrice(parseFloat(cachedPrice));
+          // Fallback: fetch prices if not in position data (shouldn't happen with shared hook)
+          const contexts = await fetchPrices();
+          const markPx = contexts?.[position.asset]?.markPx;
+          if (markPx) {
+            setSelectedPositionAssetPrice(parseFloat(markPx));
+          } else {
+            // Try to get from cache
+            const cachedPrice = getPrice(position.asset);
+            if (cachedPrice) {
+              setSelectedPositionAssetPrice(parseFloat(cachedPrice));
+            }
           }
         }
       }
@@ -262,25 +221,19 @@ export function PlaceOrder(props?: PlaceOrderProps) {
 
   // Assets are now loaded from cache via useEffect above
 
-  // Auto-fetch market data when selected asset changes
+  // Auto-fetch market data when selected asset changes or network changes
   useEffect(() => {
     if (authenticated && walletsReady && ethereumWallets.length > 0 && selectedAssetId !== null && mode === 'open') {
-      fetchMarketData();
-      // Refresh price every 10 seconds
-      const interval = setInterval(fetchMarketData, 10000);
-      return () => clearInterval(interval);
+      // Only fetch if asset exists in cache
+      const asset = getAssetMetadata(selectedAssetId);
+      if (asset) {
+        fetchMarketData();
+        // Refresh price every 10 seconds
+        const interval = setInterval(fetchMarketData, 10000);
+        return () => clearInterval(interval);
+      }
     }
-  }, [authenticated, walletsReady, ethereumWallets.length, selectedAssetId, mode]);
-
-  // Auto-fetch positions when wallet is available (for close mode)
-  useEffect(() => {
-    if (authenticated && walletsReady && ethereumWallets.length > 0 && mode === 'close') {
-      fetchPositions();
-      // Refresh positions every 5 seconds
-      const interval = setInterval(fetchPositions, 5000);
-      return () => clearInterval(interval);
-    }
-  }, [authenticated, walletsReady, ethereumWallets.length, mode]);
+  }, [authenticated, walletsReady, ethereumWallets.length, selectedAssetId, mode, isTestnet, cachedAssets.length]);
 
   // When position is selected, fetch its market data and set size
   useEffect(() => {
@@ -289,6 +242,19 @@ export function PlaceOrder(props?: PlaceOrderProps) {
       setSize(selectedPosition.size);
       // Set side to opposite of position
       setSide(selectedPosition.side === 'long' ? 'sell' : 'buy');
+      // Update price from position's currentPx if available (from shared hook)
+      if (selectedPosition.currentPx) {
+        setSelectedPositionAssetPrice(parseFloat(selectedPosition.currentPx));
+      }
+      // Refresh price every 10 seconds for the selected position
+      const interval = setInterval(() => {
+        fetchPositionMarketData(selectedPosition);
+        // Also update from position's currentPx if available
+        if (selectedPosition.currentPx) {
+          setSelectedPositionAssetPrice(parseFloat(selectedPosition.currentPx));
+        }
+      }, 10000);
+      return () => clearInterval(interval);
     }
   }, [selectedPosition, mode]);
 
@@ -471,6 +437,42 @@ export function PlaceOrder(props?: PlaceOrderProps) {
     console.log('Order size - szDecimals:', orderAssetSzDecimals);
     console.log('Order size - Final (after removing trailing zeros):', finalSize);
     console.log('Order size - Final type:', typeof finalSize);
+    
+    // IMPORTANT: Calculate order value using the ORIGINAL mark price (orderAssetPrice)
+    // before we adjust it for market orders, to ensure we meet minimum requirements
+    // Hyperliquid validates using the limit price, but we want to ensure we're above minimum
+    // even with the worst-case execution scenario
+    const MIN_ORDER_VALUE = 10.0;
+    const orderValueWithMarkPrice = parseFloat(finalSize) * orderAssetPrice;
+    
+    // If order value is below minimum, adjust size BEFORE calculating market price
+    if (orderValueWithMarkPrice < MIN_ORDER_VALUE) {
+      const minSize = MIN_ORDER_VALUE / orderAssetPrice;
+      const sizePrecision = Math.pow(10, orderAssetSzDecimals);
+      // Round UP to ensure we meet minimum
+      const minSizeRounded = Math.ceil(minSize * sizePrecision) / sizePrecision;
+      
+      // Format with proper precision
+      let adjustedSize = minSizeRounded.toFixed(orderAssetSzDecimals);
+      // Remove trailing zeros
+      adjustedSize = adjustedSize.replace(/\.?0+$/, '');
+      if (adjustedSize === '' || adjustedSize === '.') {
+        adjustedSize = minSizeRounded.toFixed(0);
+      }
+      
+      finalSize = adjustedSize;
+      const adjustedOrderValue = parseFloat(finalSize) * orderAssetPrice;
+      
+      console.log('Order value below minimum (using mark price), adjusted:', {
+        originalValue: orderValueWithMarkPrice,
+        originalSize: orderSize,
+        minSize,
+        minSizeRounded,
+        adjustedSize: finalSize,
+        adjustedValue: adjustedOrderValue,
+        markPrice: orderAssetPrice,
+      });
+    }
 
     setIsSubmitting(true);
     setOrderResult(null);
@@ -565,6 +567,44 @@ export function PlaceOrder(props?: PlaceOrderProps) {
         marketPrice = roundedPrice.toFixed(requiredDecimals);
       }
       
+      // Calculate order value and ensure it meets minimum $10 requirement
+      const calculatedOrderValue = parseFloat(finalSize) * parseFloat(marketPrice);
+      const MIN_ORDER_VALUE = 10.0;
+      
+      if (calculatedOrderValue < MIN_ORDER_VALUE) {
+        // Increase size to meet minimum order value
+        const minSize = MIN_ORDER_VALUE / parseFloat(marketPrice);
+        // Round up to next valid size increment based on szDecimals
+        // e.g., if szDecimals = 3, round to nearest 0.001
+        const sizePrecision = Math.pow(10, orderAssetSzDecimals);
+        const minSizeRounded = Math.ceil(minSize * sizePrecision) / sizePrecision;
+        
+        // Format with proper precision
+        let adjustedSize = minSizeRounded.toFixed(orderAssetSzDecimals);
+        // Remove trailing zeros (as per Hyperliquid requirements)
+        adjustedSize = adjustedSize.replace(/\.?0+$/, '');
+        // If we removed all decimals, ensure we have at least the integer part
+        if (adjustedSize === '' || adjustedSize === '.') {
+          adjustedSize = minSizeRounded.toFixed(0);
+        }
+        
+        finalSize = adjustedSize;
+        const adjustedOrderValue = parseFloat(finalSize) * parseFloat(marketPrice);
+        
+        console.log('Order value below minimum, adjusted:', {
+          originalValue: calculatedOrderValue,
+          originalSize: orderSize,
+          minSize,
+          minSizeRounded,
+          adjustedSize: finalSize,
+          adjustedValue: adjustedOrderValue,
+          price: marketPrice,
+        });
+        
+        // Note: We automatically adjust the size to meet minimum and continue with the order
+        // The user will see the adjusted size in the success message
+      }
+      
       console.log('Price calculation:', {
         originalPrice: orderAssetPrice,
         multiplier: priceMultiplier,
@@ -588,6 +628,7 @@ export function PlaceOrder(props?: PlaceOrderProps) {
       console.log('Size type:', typeof finalSize);
       console.log('szDecimals:', orderAssetSzDecimals);
       console.log('Price:', marketPrice);
+      console.log('Order Value:', parseFloat(finalSize) * parseFloat(marketPrice));
       console.log('Reduce-only:', isReduceOnly);
       
       const result = await client.order({
@@ -630,8 +671,20 @@ export function PlaceOrder(props?: PlaceOrderProps) {
       
       // Refresh positions if closing
       if (mode === 'close') {
+        console.log('=== BEFORE CLOSING POSITION ===');
+        console.log('Current Account Value:', accountSummary?.accountValue);
+        console.log('Current Total Notional Position:', accountSummary?.totalNtlPos);
+        console.log('Current Unrealized PnL:', accountSummary?.unrealizedPnl);
+        console.log('Position being closed:', {
+          asset: orderAssetName,
+          size: finalSize,
+          price: marketPrice,
+          notionalValue: (parseFloat(finalSize) * parseFloat(marketPrice)).toFixed(2),
+        });
+        
         setTimeout(() => {
-          fetchPositions();
+          console.log('=== REFRESHING POSITIONS AFTER CLOSE ===');
+          refreshPositions();
           setSelectedPosition(null);
           setSize('');
         }, 2000);
@@ -693,24 +746,19 @@ export function PlaceOrder(props?: PlaceOrderProps) {
     return num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 6 });
   };
 
+  const formatCurrency = (value: string | number) => {
+    const num = typeof value === 'string' ? parseFloat(value) : value;
+    if (isNaN(num)) return '0.00';
+    return num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  };
+
   return (
     <div className="p-6 border rounded-lg bg-zinc-50 dark:bg-zinc-900">
       <h2 className="text-xl font-semibold mb-4">
-        {mode === 'close' ? 'Close Position' : 'Step 5: Place Market Order'}
+        {mode === 'close' ? 'Close Position' : 'Place Market Order'}
       </h2>
       
       <div className="space-y-4">
-        {/* Network Indicator */}
-        <div className="p-3 bg-purple-50 dark:bg-purple-900/30 border border-purple-200 dark:border-purple-800 rounded-lg">
-          <div className="flex items-center gap-2">
-            <span className="text-sm font-medium text-purple-900 dark:text-purple-100">
-              Network:
-            </span>
-            <span className="px-2 py-1 text-xs font-semibold bg-purple-200 dark:bg-purple-800 text-purple-800 dark:text-purple-200 rounded">
-              {isTestnet ? 'TESTNET' : 'MAINNET'}
-            </span>
-          </div>
-        </div>
 
         {mode === 'close' ? (
           <>
@@ -751,24 +799,44 @@ export function PlaceOrder(props?: PlaceOrderProps) {
 
                 {selectedPosition && (
                   <div className="p-4 bg-white dark:bg-zinc-800 border rounded-lg">
-                    <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100 mb-3">
-                      Position Details
-                    </h3>
-                    <div className="grid grid-cols-2 gap-4 mb-4">
+                    <div className="flex items-start justify-between mb-3">
                       <div>
-                        <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-1">Asset</p>
-                        <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">
-                          {selectedPosition.assetName}
+                        <div className="flex items-center gap-2 mb-1">
+                          <h3 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">
+                            {selectedPosition.assetName}
+                          </h3>
+                          <span
+                            className={`px-2 py-1 text-xs font-medium rounded ${
+                              selectedPosition.side === 'long'
+                                ? 'bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-200'
+                                : 'bg-red-100 dark:bg-red-900/30 text-red-800 dark:text-red-200'
+                            }`}
+                          >
+                            {selectedPosition.side.toUpperCase()}
+                          </span>
+                        </div>
+                        <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                          Asset ID: {selectedPosition.asset}
                         </p>
                       </div>
-                      <div>
-                        <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-1">Side</p>
-                        <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">
-                          {selectedPosition.side.toUpperCase()}
+                      <div className="text-right">
+                        <p
+                          className={`text-lg font-semibold ${
+                            parseFloat(selectedPosition.unrealizedPnl) >= 0
+                              ? 'text-green-600 dark:text-green-400'
+                              : 'text-red-600 dark:text-red-400'
+                          }`}
+                        >
+                          {parseFloat(selectedPosition.unrealizedPnl) >= 0 ? '+' : ''}
+                          ${formatCurrency(selectedPosition.unrealizedPnl)} USDC
                         </p>
+                        <p className="text-xs text-zinc-500 dark:text-zinc-400">Unrealized PnL</p>
                       </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 pt-3 border-t border-zinc-200 dark:border-zinc-700">
                       <div>
-                        <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-1">Current Size</p>
+                        <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-1">Size</p>
                         <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">
                           {formatNumber(selectedPosition.size)} {selectedPosition.assetName}
                         </p>
@@ -778,16 +846,46 @@ export function PlaceOrder(props?: PlaceOrderProps) {
                         <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">
                           ${formatNumber(selectedPosition.entryPx)}
                         </p>
+                        {selectedPosition.currentPx && (
+                          <>
+                            <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-1 mt-1">Current Price</p>
+                            <p className={`text-sm font-medium ${
+                              parseFloat(selectedPosition.currentPx) > parseFloat(selectedPosition.entryPx)
+                                ? 'text-green-600 dark:text-green-400'
+                                : parseFloat(selectedPosition.currentPx) < parseFloat(selectedPosition.entryPx)
+                                ? 'text-red-600 dark:text-red-400'
+                                : 'text-zinc-900 dark:text-zinc-100'
+                            }`}>
+                              ${formatNumber(selectedPosition.currentPx)}
+                            </p>
+                          </>
+                        )}
+                        {selectedPosition.fundingRate !== null && (
+                          <>
+                            <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-1 mt-1">Funding Rate</p>
+                            <p className={`text-sm font-medium ${
+                              parseFloat(selectedPosition.fundingRate) >= 0
+                                ? 'text-green-600 dark:text-green-400'
+                                : 'text-red-600 dark:text-red-400'
+                            }`}>
+                              {parseFloat(selectedPosition.fundingRate) >= 0 ? '+' : ''}{selectedPosition.fundingRate}%
+                            </p>
+                          </>
+                        )}
                       </div>
-                    </div>
-                    {selectedPositionAssetPrice && (
-                      <div className="mb-4">
-                        <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-1">Current Price</p>
-                        <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-                          ${formatNumber(selectedPositionAssetPrice)}
+                      <div>
+                        <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-1">Leverage</p>
+                        <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">
+                          {formatNumber(selectedPosition.leverage)}x
                         </p>
                       </div>
-                    )}
+                      <div>
+                        <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-1">Liquidation Price</p>
+                        <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">
+                          {selectedPosition.liquidationPx === 'N/A' ? 'N/A' : `$${formatNumber(selectedPosition.liquidationPx)}`}
+                        </p>
+                      </div>
+                    </div>
                   </div>
                 )}
               </>
@@ -1003,14 +1101,36 @@ export function PlaceOrder(props?: PlaceOrderProps) {
 
         {orderResult && (
           <div
-            className={`p-4 rounded-lg border ${
+            className={`p-4 rounded-lg border relative ${
               orderResult.success
                 ? 'bg-green-100 dark:bg-green-900/30 border-green-300 dark:border-green-700'
                 : 'bg-red-100 dark:bg-red-900/30 border-red-300 dark:border-red-700'
             }`}
           >
+            <button
+              onClick={() => setOrderResult(null)}
+              className={`absolute top-2 right-2 p-1 rounded hover:bg-opacity-20 transition-colors ${
+                orderResult.success
+                  ? 'text-green-800 dark:text-green-200 hover:bg-green-800'
+                  : 'text-red-800 dark:text-red-200 hover:bg-red-800'
+              }`}
+              aria-label="Close notification"
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                className="h-5 w-5"
+                viewBox="0 0 20 20"
+                fill="currentColor"
+              >
+                <path
+                  fillRule="evenodd"
+                  d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z"
+                  clipRule="evenodd"
+                />
+              </svg>
+            </button>
             <p
-              className={`font-semibold mb-2 ${
+              className={`font-semibold mb-2 pr-6 ${
                 orderResult.success
                   ? 'text-green-800 dark:text-green-200'
                   : 'text-red-800 dark:text-red-200'
@@ -1040,7 +1160,7 @@ export function PlaceOrder(props?: PlaceOrderProps) {
                   <strong>Important:</strong> You have USDC on Arbitrum (on-chain), but you need to deposit it to Hyperliquid first.
                 </p>
                 <p className="text-xs text-blue-700 dark:text-blue-300">
-                  <strong>Next Step:</strong> Go to the "Step 4: Deposit to HyperCore" section above and send your USDC to the bridge address. 
+                  <strong>Next Step:</strong> Go to the "Step 6: Deposit to HyperCore" section above and send your USDC to the bridge address. 
                   This will activate your Hyperliquid account and make your funds available for trading.
                 </p>
               </div>

@@ -278,7 +278,7 @@ export function Deposit() {
 
   return (
     <div className="p-6 border rounded-lg bg-zinc-50 dark:bg-zinc-900">
-      <h2 className="text-xl font-semibold mb-4">Step 4: Deposit to HyperCore (Initialize Account)</h2>
+      <h2 className="text-xl font-semibold mb-4">Step 6: Deposit to HyperCore (Initialize Account)</h2>
       
       <div className="space-y-4">
         {/* Network Verification */}
@@ -410,12 +410,6 @@ export function Deposit() {
           </div>
         </div>
 
-        <div className="p-3 bg-yellow-50 dark:bg-yellow-900/30 border border-yellow-200 dark:border-yellow-800 rounded-lg">
-          <p className="text-xs text-yellow-800 dark:text-yellow-200">
-            <strong>Note:</strong> You can either use the button below to send via Privy, or manually send USDC 
-            from your wallet to the bridge address using a wallet interface like MetaMask.
-          </p>
-        </div>
 
         <button
           onClick={handleDeposit}
@@ -466,18 +460,6 @@ export function Deposit() {
           </div>
         )}
 
-        <div className="p-3 bg-zinc-100 dark:bg-zinc-800 rounded-lg">
-          <p className="text-xs font-medium text-zinc-700 dark:text-zinc-300 mb-2">
-            Manual Deposit Instructions:
-          </p>
-          <ol className="text-xs text-zinc-600 dark:text-zinc-400 space-y-1 list-decimal list-inside">
-            <li>Ensure you have USDC on Arbitrum {isTestnet ? 'Sepolia' : ''} network</li>
-            <li>Open your wallet (MetaMask, etc.) and switch to Arbitrum {isTestnet ? 'Sepolia' : ''}</li>
-            <li>Send USDC to the bridge address shown above</li>
-            <li>Wait for the transaction to confirm (usually 1-2 minutes)</li>
-            <li>Your account will be activated on Hyperliquid once the deposit is processed</li>
-          </ol>
-        </div>
       </div>
     </div>
   );

@@ -1,217 +1,11 @@
 'use client';
 
-import { usePrivy, useWallets } from '@privy-io/react-auth';
-import { useState, useEffect, useMemo } from 'react';
-import { getAddress } from 'viem';
-import * as hl from '@nktkas/hyperliquid';
-import { useHyperliquidAssets } from '@/hooks/useHyperliquidAssets';
-import { useHyperliquidPrices } from '@/hooks/useHyperliquidPrices';
-
-interface Position {
-  asset: number;
-  assetName: string;
-  side: 'long' | 'short';
-  size: string;
-  entryPx: string;
-  currentPx: string | null;
-  fundingRate: string | null;
-  leverage: string;
-  unrealizedPnl: string;
-  liquidationPx: string;
-}
-
-interface AccountSummary {
-  accountValue: string;
-  totalNtlPos: string;
-  unrealizedPnl: string;
-  withdrawable: string;
-  marginUsed: string;
-  crossMaintenanceMarginUsed: string;
-  crossMarginRatio: string;
-  crossAccountLeverage: string;
-}
+import { usePositions, type Position, type AccountSummary } from '@/hooks/usePositions';
 
 export function ViewPositions() {
-  const { ready, authenticated } = usePrivy();
-  const { wallets, ready: walletsReady } = useWallets();
-  
-  const [positions, setPositions] = useState<Position[]>([]);
-  const [accountSummary, setAccountSummary] = useState<AccountSummary | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { positions, accountSummary, isLoading, error, fetchPositions, ready, authenticated, hasWallet } = usePositions();
 
-  const isTestnet = process.env.NEXT_PUBLIC_HYPERLIQUID_TESTNET === 'true';
-  
-  // Use cached asset metadata
-  const { assetMap, meta } = useHyperliquidAssets(isTestnet);
-  const { fetchPrices, getPrice } = useHyperliquidPrices(isTestnet);
-
-  // Get Ethereum embedded wallets
-  const ethereumWallets = useMemo(() => {
-    return wallets.filter(
-      (wallet) => {
-        const chainId = wallet.chainId;
-        return chainId === 'eip155:1' || 
-               chainId === 'eip155:42161' || 
-               chainId?.startsWith('eip155:');
-      }
-    );
-  }, [wallets]);
-
-  const fetchPositions = async () => {
-    if (ethereumWallets.length === 0) return;
-
-    setIsLoading(true);
-    setError(null);
-
-    try {
-      const walletAddress = ethereumWallets[0].address as `0x${string}`;
-      const checksummedAddress = getAddress(walletAddress);
-
-      // Initialize InfoClient
-      const transport = new hl.HttpTransport({ isTestnet });
-      const infoClient = new hl.InfoClient({ transport });
-
-      // Get user clearinghouse state (positions, balance, margin)
-      const clearinghouseState = await infoClient.clearinghouseState({
-        user: checksummedAddress,
-      });
-
-      // Fetch prices (using cached asset metadata)
-      const contexts = await fetchPrices();
-      if (!contexts) {
-        throw new Error('Failed to fetch price data');
-      }
-
-      // Parse positions from clearinghouseState
-      const openPositions: Position[] = [];
-      let totalUnrealizedPnl = 0;
-      
-      if (clearinghouseState.assetPositions) {
-        clearinghouseState.assetPositions.forEach((pos) => {
-          const size = parseFloat(pos.position.szi || '0');
-          if (Math.abs(size) > 0) {
-            // Only include non-zero positions
-            // Use the 'coin' field directly from position data as it's more reliable
-            // Fallback to asset ID mapping if coin field is not available
-            const assetNameFromCoin = pos.position.coin;
-            const assetId = (pos.position as any).asset || 0;
-            const assetNameFromMap = assetMap[assetId] || `Asset ${assetId}`;
-            const assetName = assetNameFromCoin || assetNameFromMap;
-            const isLong = parseFloat(pos.position.szi || '0') > 0;
-            
-            // Try to find the asset ID from the asset name if we have the coin field
-            let finalAssetId = assetId;
-            if (assetNameFromCoin) {
-              // Find the asset ID by matching the coin name in the universe
-              const foundAssetIndex = meta.universe?.findIndex((a) => a.name === assetNameFromCoin);
-              if (foundAssetIndex !== undefined && foundAssetIndex !== -1) {
-                finalAssetId = foundAssetIndex;
-              }
-            }
-            
-            // Get current price (mark price) for this asset
-            let currentPrice: string | null = null;
-            if (finalAssetId !== undefined) {
-              currentPrice = getPrice(finalAssetId) || contexts[finalAssetId]?.markPx || null;
-            }
-            
-            // Get funding rate for this asset
-            let fundingRate: string | null = null;
-            if (finalAssetId !== undefined && contexts[finalAssetId]) {
-              const context = contexts[finalAssetId] as any;
-              // Try different possible field names for funding rate
-              const fundingValue = context.funding || context.fundingRate || context.premium || null;
-              if (fundingValue !== null && fundingValue !== undefined) {
-                // Funding rate is typically provided as a decimal (e.g., 0.0001 = 0.01%)
-                // Convert to percentage for display
-                const funding = parseFloat(fundingValue);
-                if (!isNaN(funding)) {
-                  fundingRate = (funding * 100).toFixed(4); // Convert to percentage with 4 decimal places
-                }
-              }
-            }
-            
-            // Sum up unrealized PnL from all positions
-            const positionUnrealizedPnl = parseFloat(pos.position.unrealizedPnl || '0');
-            totalUnrealizedPnl += positionUnrealizedPnl;
-            
-            openPositions.push({
-              asset: finalAssetId,
-              assetName,
-              side: isLong ? 'long' : 'short',
-              size: Math.abs(size).toFixed(6),
-              entryPx: pos.position.entryPx || '0',
-              currentPx: currentPrice,
-              fundingRate,
-              leverage: pos.position.leverage?.value || '1',
-              unrealizedPnl: pos.position.unrealizedPnl || '0',
-              liquidationPx: pos.position.liquidationPx?.px || 'N/A',
-            });
-          }
-        });
-      }
-
-      setPositions(openPositions);
-
-      // Extract account summary from marginSummary and clearinghouseState
-      const marginSummary = clearinghouseState.marginSummary;
-      
-      // Calculate cross margin ratio if available
-      let crossMarginRatio = '0.00';
-      const crossMaintenanceMarginUsed = (marginSummary as any)?.crossMaintenanceMarginUsed;
-      if (crossMaintenanceMarginUsed && marginSummary?.accountValue) {
-        const maintenance = parseFloat(crossMaintenanceMarginUsed);
-        const accountVal = parseFloat(marginSummary.accountValue);
-        if (accountVal > 0) {
-          crossMarginRatio = ((maintenance / accountVal) * 100).toFixed(2);
-        }
-      }
-      
-      // Calculate cross account leverage if available
-      let crossAccountLeverage = '0.00';
-      if (marginSummary?.totalNtlPos && marginSummary?.accountValue) {
-        const totalPos = parseFloat(marginSummary.totalNtlPos);
-        const accountVal = parseFloat(marginSummary.accountValue);
-        if (accountVal > 0) {
-          crossAccountLeverage = (totalPos / accountVal).toFixed(2);
-        }
-      }
-      
-      setAccountSummary({
-        accountValue: marginSummary?.accountValue || '0',
-        totalNtlPos: marginSummary?.totalNtlPos || '0',
-        unrealizedPnl: totalUnrealizedPnl.toFixed(2),
-        withdrawable: clearinghouseState.withdrawable || '0',
-        marginUsed: (marginSummary as any)?.marginUsed || '0',
-        crossMaintenanceMarginUsed: crossMaintenanceMarginUsed || '0',
-        crossMarginRatio,
-        crossAccountLeverage,
-      });
-    } catch (err) {
-      console.error('Error fetching positions:', err);
-      if (err instanceof Error && (err.message.includes('does not exist') || err.message.includes('not found'))) {
-        setPositions([]);
-        setError(null); // User just doesn't have positions yet
-      } else {
-        setError(err instanceof Error ? err.message : 'Failed to fetch positions');
-      }
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  // Auto-fetch positions when wallet is available
-  useEffect(() => {
-    if (authenticated && walletsReady && ethereumWallets.length > 0) {
-      fetchPositions();
-      // Refresh positions every 5 seconds
-      const interval = setInterval(fetchPositions, 5000);
-      return () => clearInterval(interval);
-    }
-  }, [authenticated, walletsReady, ethereumWallets.length]);
-
-  if (!ready || !walletsReady) {
+  if (!ready) {
     return (
       <div className="p-6 border rounded-lg bg-zinc-50 dark:bg-zinc-900">
         <p className="text-sm text-zinc-600 dark:text-zinc-400">Loading...</p>
@@ -229,7 +23,7 @@ export function ViewPositions() {
     );
   }
 
-  if (ethereumWallets.length === 0) {
+  if (!hasWallet) {
     return (
       <div className="p-6 border rounded-lg bg-zinc-50 dark:bg-zinc-900">
         <p className="text-sm text-zinc-600 dark:text-zinc-400">
@@ -243,6 +37,12 @@ export function ViewPositions() {
     const num = typeof value === 'string' ? parseFloat(value) : value;
     if (isNaN(num)) return '0.00';
     return num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 6 });
+  };
+
+  const formatCurrency = (value: string | number) => {
+    const num = typeof value === 'string' ? parseFloat(value) : value;
+    if (isNaN(num)) return '0.00';
+    return num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   };
 
   const formatPnl = (value: string) => {
@@ -279,13 +79,13 @@ export function ViewPositions() {
             <div>
               <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-1">Account Value</p>
               <p className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">
-                ${formatNumber(accountSummary.accountValue)} USDC
+                ${formatCurrency(accountSummary.accountValue)} USDC
               </p>
             </div>
             <div>
               <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-1">Total Position Value</p>
               <p className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">
-                ${formatNumber(accountSummary.totalNtlPos)} USDC
+                ${formatCurrency(accountSummary.totalNtlPos)} USDC
               </p>
             </div>
             <div>
@@ -301,37 +101,7 @@ export function ViewPositions() {
             <div>
               <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-1">Withdrawable</p>
               <p className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">
-                ${formatNumber(accountSummary.withdrawable)} USDC
-              </p>
-            </div>
-            <div>
-              <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-1">Margin Used</p>
-              <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">
-                ${formatNumber(accountSummary.marginUsed)} USDC
-              </p>
-            </div>
-            <div>
-              <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-1">Maintenance Margin</p>
-              <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">
-                ${formatNumber(accountSummary.crossMaintenanceMarginUsed)} USDC
-              </p>
-            </div>
-            <div>
-              <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-1">Cross Margin Ratio</p>
-              <p className={`text-sm font-medium ${
-                parseFloat(accountSummary.crossMarginRatio) < 50
-                  ? 'text-green-600 dark:text-green-400'
-                  : parseFloat(accountSummary.crossMarginRatio) < 80
-                  ? 'text-yellow-600 dark:text-yellow-400'
-                  : 'text-red-600 dark:text-red-400'
-              }`}>
-                {accountSummary.crossMarginRatio}%
-              </p>
-            </div>
-            <div>
-              <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-1">Cross Account Leverage</p>
-              <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">
-                {accountSummary.crossAccountLeverage}x
+                ${formatCurrency(accountSummary.withdrawable)} USDC
               </p>
             </div>
           </div>

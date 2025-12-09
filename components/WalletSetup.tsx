@@ -100,7 +100,7 @@ export function WalletSetup() {
   return (
     <div className="w-full space-y-4">
       <div className="p-6 border rounded-lg bg-zinc-50 dark:bg-zinc-900">
-        <h2 className="text-xl font-semibold mb-4">Step 2: Wallet Management</h2>
+        <h2 className="text-xl font-semibold mb-4">Step 3: Wallet Creation</h2>
         
         <div className="space-y-4">
           <div className="p-4 bg-green-100 dark:bg-green-900/30 border border-green-300 dark:border-green-700 rounded-lg">
