@@ -293,19 +293,12 @@ export function Deposit() {
 
         <div className="p-4 bg-blue-50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-800 rounded-lg">
           <p className="text-sm text-blue-800 dark:text-blue-200 mb-2">
-            <strong>Important:</strong> To trade on Hyperliquid, you need to deposit USDC first.
-            This will activate your account on Hyperliquid mainnet.
-          </p>
-          <p className="text-xs text-blue-700 dark:text-blue-300">
-            Minimum deposit: 5 USDC • Network: {isTestnet ? 'Arbitrum Sepolia (Testnet)' : 'Arbitrum (Mainnet)'}
-          </p>
-          <p className="text-xs text-blue-700 dark:text-blue-300 mt-2">
-            <strong>Network:</strong> Transaction will be sent on Arbitrum mainnet (chain ID: 42161).
-            The wallet will automatically switch to Arbitrum if needed.
+            <strong>Important:</strong> To trade on Hyperliquid, you need to deposit a minimum of $5 USDC via the Arbitrum bridge first.
+            This will activate your account on Hyperliquid mainnet. Sending less than $5 USDC will result in a loss of funds.
           </p>
           <p className="text-xs text-yellow-700 dark:text-yellow-300 mt-2 font-medium">
             <strong>Gas Sponsorship:</strong> {isSponsored 
-              ? 'Enabled - Privy app will pay gas fees using preloaded $10 balance.'
+              ? 'Enabled - Configure this in your Privy dashboard by loading $ for gas sponsorship.'
               : 'Disabled - You will need ETH in your wallet to pay for gas fees. Make sure you have sufficient ETH balance on Arbitrum to cover the transaction.'}
           </p>
         </div>

@@ -157,7 +157,7 @@ To ensure funds can be deposited to Hyperliquid, users need to have a small amou
 
 1. Buy ETH directly on Arbitrum using a DEX or bridge
 2. Bridge ETH from Ethereum mainnet to Arbitrum
-3. Use a faucet if testing on testnet
+
 
 Without ETH for gas, deposit transactions to Hyperliquid will fail.
 
