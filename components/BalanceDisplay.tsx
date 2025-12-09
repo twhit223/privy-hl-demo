@@ -5,6 +5,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { createPublicClient, http, formatUnits, getAddress } from 'viem';
 import { arbitrum } from 'viem/chains';
 import * as hl from '@nktkas/hyperliquid';
+import { throttleRequest } from '@/utils/apiThrottle';
 
 // USDC contract addresses
 const USDC_MAINNET = '0xaf88d065e77c8cC2239327C5EDb3A432268e5831';
@@ -97,13 +98,19 @@ export function BalanceDisplay() {
       // Fetch Hyperliquid mainnet balance
       let hyperliquidMainnetBalance = '0';
       try {
-        const mainnetTransport = new hl.HttpTransport({ isTestnet: false });
-        const mainnetInfoClient = new hl.InfoClient({ transport: mainnetTransport });
-        
-        // Use clearinghouseState to get user USDC balance (withdrawable amount)
-        const mainnetState = await mainnetInfoClient.clearinghouseState({
-          user: checksummedAddress,
-        });
+        const mainnetState = await throttleRequest(
+          `balance-mainnet-${checksummedAddress}`,
+          async () => {
+            const mainnetTransport = new hl.HttpTransport({ isTestnet: false });
+            const mainnetInfoClient = new hl.InfoClient({ transport: mainnetTransport });
+            
+            // Use clearinghouseState to get user USDC balance (withdrawable amount)
+            return await mainnetInfoClient.clearinghouseState({
+              user: checksummedAddress,
+            });
+          },
+          2000 // Minimum 2 seconds between balance requests
+        );
         
         // The withdrawable field represents the USDC balance available for withdrawal
         const balanceValue = parseFloat(mainnetState.withdrawable || '0');
@@ -121,12 +128,18 @@ export function BalanceDisplay() {
       // Fetch Hyperliquid testnet balance
       let hyperliquidTestnetBalance = '0';
       try {
-        const testnetTransport = new hl.HttpTransport({ isTestnet: true });
-        const testnetInfoClient = new hl.InfoClient({ transport: testnetTransport });
-        
-        const testnetState = await testnetInfoClient.clearinghouseState({
-          user: checksummedAddress,
-        });
+        const testnetState = await throttleRequest(
+          `balance-testnet-${checksummedAddress}`,
+          async () => {
+            const testnetTransport = new hl.HttpTransport({ isTestnet: true });
+            const testnetInfoClient = new hl.InfoClient({ transport: testnetTransport });
+            
+            return await testnetInfoClient.clearinghouseState({
+              user: checksummedAddress,
+            });
+          },
+          2000 // Minimum 2 seconds between balance requests
+        );
         
         const balanceValue = parseFloat(testnetState.withdrawable || '0');
         hyperliquidTestnetBalance = balanceValue.toFixed(2);
@@ -157,8 +170,8 @@ export function BalanceDisplay() {
   useEffect(() => {
     if (authenticated && walletsReady && ethereumWallets.length > 0) {
       fetchBalances();
-      // Refresh balances every 10 seconds
-      const interval = setInterval(fetchBalances, 10000);
+      // Refresh balances every 20 seconds (increased from 10s to reduce API calls)
+      const interval = setInterval(fetchBalances, 20000);
       return () => clearInterval(interval);
     }
   }, [authenticated, walletsReady, ethereumWallets.length]);

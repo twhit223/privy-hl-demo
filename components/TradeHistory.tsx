@@ -5,6 +5,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { getAddress } from 'viem';
 import * as hl from '@nktkas/hyperliquid';
 import { useNetwork } from '@/contexts/NetworkContext';
+import { throttleRequest } from '@/utils/apiThrottle';
 
 interface Trade {
   coin: string;
@@ -55,35 +56,41 @@ export function TradeHistory() {
       const transport = new hl.HttpTransport({ isTestnet });
       const infoClient = new hl.InfoClient({ transport });
 
-      // Fetch user fills/trades using Hyperliquid API
+      // Fetch user fills/trades using Hyperliquid API with throttling
       // Hyperliquid uses POST /info endpoint with type: 'userFills'
       let userFills: any[] = [];
       
       try {
-        const apiUrl = isTestnet 
-          ? 'https://api.hyperliquid-testnet.xyz/info'
-          : 'https://api.hyperliquid.xyz/info';
-        
-        const response = await fetch(apiUrl, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            type: 'userFills',
-            user: checksummedAddress,
-          }),
-        });
+        userFills = await throttleRequest(
+          `trades-${checksummedAddress}-${isTestnet}`,
+          async () => {
+            const apiUrl = isTestnet 
+              ? 'https://api.hyperliquid-testnet.xyz/info'
+              : 'https://api.hyperliquid.xyz/info';
+            
+            const response = await fetch(apiUrl, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                type: 'userFills',
+                user: checksummedAddress,
+              }),
+            });
 
-        if (response.ok) {
-          const data = await response.json();
-          // Hyperliquid returns data in format: { data: [...] } or directly as array
-          userFills = Array.isArray(data) ? data : (data.data || data.fills || []);
-        } else {
-          const errorText = await response.text();
-          console.error('API error response:', errorText);
-          throw new Error(`Failed to fetch trades: ${response.status} ${response.statusText}`);
-        }
+            if (response.ok) {
+              const data = await response.json();
+              // Hyperliquid returns data in format: { data: [...] } or directly as array
+              return Array.isArray(data) ? data : (data.data || data.fills || []);
+            } else {
+              const errorText = await response.text();
+              console.error('API error response:', errorText);
+              throw new Error(`Failed to fetch trades: ${response.status} ${response.statusText}`);
+            }
+          },
+          3000 // Minimum 3 seconds between trade history requests
+        );
       } catch (apiError) {
         console.error('Error fetching user fills:', apiError);
         // If user doesn't exist or has no trades, that's okay
@@ -132,8 +139,8 @@ export function TradeHistory() {
   useEffect(() => {
     if (authenticated && walletsReady && ethereumWallets.length > 0) {
       fetchTradeHistory();
-      // Refresh every 30 seconds
-      const interval = setInterval(fetchTradeHistory, 30000);
+      // Refresh every 60 seconds (increased from 30s to reduce API calls)
+      const interval = setInterval(fetchTradeHistory, 60000);
       return () => clearInterval(interval);
     }
   }, [authenticated, walletsReady, ethereumWallets.length, isTestnet]);

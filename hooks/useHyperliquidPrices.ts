@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import * as hl from '@nktkas/hyperliquid';
+import { throttleRequest } from '@/utils/apiThrottle';
 
 interface AssetContext {
   markPx?: string;
@@ -15,7 +16,7 @@ interface PriceData {
 
 // Cache for price data (shorter cache since prices change frequently)
 const priceCache: Map<string, PriceData> = new Map();
-const PRICE_CACHE_DURATION = 5 * 1000; // 5 seconds cache for prices
+const PRICE_CACHE_DURATION = 10 * 1000; // 10 seconds cache for prices (increased from 5s)
 
 export function useHyperliquidPrices(isTestnet: boolean = false) {
   const cacheKey = isTestnet ? 'testnet' : 'mainnet';
@@ -35,11 +36,19 @@ export function useHyperliquidPrices(isTestnet: boolean = false) {
     setError(null);
 
     try {
-      const transport = new hl.HttpTransport({ isTestnet });
-      const infoClient = new hl.InfoClient({ transport });
-      
-      // Fetch only contexts (prices) - we already have metadata cached
-      const [, contexts] = await infoClient.metaAndAssetCtxs();
+      // Use throttling to prevent rate limiting
+      const contexts = await throttleRequest(
+        `prices-${cacheKey}`,
+        async () => {
+          const transport = new hl.HttpTransport({ isTestnet });
+          const infoClient = new hl.InfoClient({ transport });
+          
+          // Fetch only contexts (prices) - we already have metadata cached
+          const [, contexts] = await infoClient.metaAndAssetCtxs();
+          return contexts;
+        },
+        2000 // Minimum 2 seconds between price requests
+      );
       
       const priceData: PriceData = {
         contexts,
@@ -62,7 +71,7 @@ export function useHyperliquidPrices(isTestnet: boolean = false) {
       
       return null;
     }
-  }, [cacheKey]);
+  }, [cacheKey, isTestnet]);
 
   const getPrice = useCallback((assetId: number): string | null => {
     const cached = priceCache.get(cacheKey);

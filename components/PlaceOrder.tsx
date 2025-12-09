@@ -9,6 +9,7 @@ import { useHyperliquidAssets } from '@/hooks/useHyperliquidAssets';
 import { useHyperliquidPrices } from '@/hooks/useHyperliquidPrices';
 import { useNetwork } from '@/contexts/NetworkContext';
 import { usePositions, type Position } from '@/hooks/usePositions';
+import { throttleRequest } from '@/utils/apiThrottle';
 
 interface PlaceOrderProps {
   mode?: 'open' | 'close';
@@ -146,14 +147,20 @@ export function PlaceOrder(props?: PlaceOrderProps) {
         }
       }
 
-      // Get available balance
-      const transport = new hl.HttpTransport({ isTestnet });
-      const infoClient = new hl.InfoClient({ transport });
+      // Get available balance (use throttling to prevent rate limiting)
       const walletAddress = ethereumWallets[0].address as `0x${string}`;
       const checksummedAddress = getAddress(walletAddress);
-      const clearinghouseState = await infoClient.clearinghouseState({
-        user: checksummedAddress,
-      });
+      const clearinghouseState = await throttleRequest(
+        `balance-${checksummedAddress}-${isTestnet}`,
+        async () => {
+          const transport = new hl.HttpTransport({ isTestnet });
+          const infoClient = new hl.InfoClient({ transport });
+          return await infoClient.clearinghouseState({
+            user: checksummedAddress,
+          });
+        },
+        2000 // Minimum 2 seconds between balance requests
+      );
       
       // Get account value (available for trading)
       const accountValue = clearinghouseState.marginSummary?.accountValue;
@@ -228,8 +235,8 @@ export function PlaceOrder(props?: PlaceOrderProps) {
       const asset = getAssetMetadata(selectedAssetId);
       if (asset) {
         fetchMarketData();
-        // Refresh price every 10 seconds
-        const interval = setInterval(fetchMarketData, 10000);
+        // Refresh price every 15 seconds (increased from 10s to reduce API calls)
+        const interval = setInterval(fetchMarketData, 15000);
         return () => clearInterval(interval);
       }
     }
@@ -246,14 +253,14 @@ export function PlaceOrder(props?: PlaceOrderProps) {
       if (selectedPosition.currentPx) {
         setSelectedPositionAssetPrice(parseFloat(selectedPosition.currentPx));
       }
-      // Refresh price every 10 seconds for the selected position
+      // Refresh price every 15 seconds for the selected position (increased from 10s)
       const interval = setInterval(() => {
         fetchPositionMarketData(selectedPosition);
         // Also update from position's currentPx if available
         if (selectedPosition.currentPx) {
           setSelectedPositionAssetPrice(parseFloat(selectedPosition.currentPx));
         }
-      }, 10000);
+      }, 15000);
       return () => clearInterval(interval);
     }
   }, [selectedPosition, mode]);

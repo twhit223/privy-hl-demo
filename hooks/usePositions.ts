@@ -7,6 +7,7 @@ import * as hl from '@nktkas/hyperliquid';
 import { useHyperliquidAssets } from '@/hooks/useHyperliquidAssets';
 import { useHyperliquidPrices } from '@/hooks/useHyperliquidPrices';
 import { useNetwork } from '@/contexts/NetworkContext';
+import { throttleRequest } from '@/utils/apiThrottle';
 
 export interface Position {
   asset: number;
@@ -74,14 +75,20 @@ export function usePositions() {
       const walletAddress = ethereumWallets[0].address as `0x${string}`;
       const checksummedAddress = getAddress(walletAddress);
 
-      // Initialize InfoClient
-      const transport = new hl.HttpTransport({ isTestnet });
-      const infoClient = new hl.InfoClient({ transport });
-
-      // Get user clearinghouse state (positions, balance, margin)
-      const clearinghouseState = await infoClient.clearinghouseState({
-        user: checksummedAddress,
-      });
+      // Use throttling to prevent rate limiting
+      const clearinghouseState = await throttleRequest(
+        `positions-${checksummedAddress}-${isTestnet}`,
+        async () => {
+          const transport = new hl.HttpTransport({ isTestnet });
+          const infoClient = new hl.InfoClient({ transport });
+          
+          // Get user clearinghouse state (positions, balance, margin)
+          return await infoClient.clearinghouseState({
+            user: checksummedAddress,
+          });
+        },
+        3000 // Minimum 3 seconds between position requests
+      );
 
       // Log raw API response for debugging
       console.log('=== CLEARINGHOUSE STATE API RESPONSE ===');
@@ -248,8 +255,8 @@ export function usePositions() {
   useEffect(() => {
     if (authenticated && walletsReady && ethereumWallets.length > 0 && meta && !isLoadingAssets) {
       fetchPositions();
-      // Refresh positions every 5 seconds
-      const interval = setInterval(fetchPositions, 5000);
+      // Refresh positions every 10 seconds (increased from 5s to reduce API calls)
+      const interval = setInterval(fetchPositions, 10000);
       return () => clearInterval(interval);
     }
   }, [authenticated, walletsReady, ethereumWallets.length, isTestnet, meta, isLoadingAssets, fetchPositions]);
